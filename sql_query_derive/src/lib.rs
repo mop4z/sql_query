@@ -172,6 +172,10 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
             pub fn any(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
                 ::sql_query::SqlExpr::any(self, val)
             }
+
+            pub fn jsonb_text_eq(self, key: impl Into<::sql_query::SqlParam>, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::jsonb_text_eq(self, key, val)
+            }
         }
     };
 

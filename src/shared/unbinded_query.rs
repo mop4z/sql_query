@@ -1,7 +1,7 @@
 use std::{fmt::Write, marker::PhantomData};
 
 use sqlx::{
-    FromRow, Postgres, QueryBuilder,
+    Executor, FromRow, Postgres, QueryBuilder,
     postgres::{PgPool, PgQueryResult, PgRow},
 };
 
@@ -95,77 +95,122 @@ impl<'q> UnbindedQuery<'q> {
 
 impl BoundQuery {
     /// Binds all parameters and executes the query, returning the raw result.
-    pub async fn execute(self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
+    pub async fn execute<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<PgQueryResult, sqlx::Error> {
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.execute(pool).await
+        q.execute(executor).await
     }
 
     /// Fetches all matching rows as raw `PgRow`s.
-    pub async fn fetch_all(self, pool: &PgPool) -> Result<Vec<PgRow>, sqlx::Error> {
+    pub async fn fetch_all<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<Vec<PgRow>, sqlx::Error> {
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_all(pool).await
+        q.fetch_all(executor).await
     }
 
     /// Fetches exactly one row as a raw `PgRow`.
-    pub async fn fetch_one(self, pool: &PgPool) -> Result<PgRow, sqlx::Error> {
+    pub async fn fetch_one<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<PgRow, sqlx::Error> {
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_one(pool).await
+        q.fetch_one(executor).await
     }
 
     /// Fetches at most one row as a raw `PgRow`, returning `None` if no rows match.
-    pub async fn fetch_optional(self, pool: &PgPool) -> Result<Option<PgRow>, sqlx::Error> {
+    pub async fn fetch_optional<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<Option<PgRow>, sqlx::Error> {
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_optional(pool).await
+        q.fetch_optional(executor).await
     }
 }
 
 impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
     /// Fetches all matching rows, deserializing each into `T`.
-    pub async fn fetch_all(self, pool: &PgPool) -> Result<Vec<T>, sqlx::Error> {
+    pub async fn fetch_all<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<Vec<T>, sqlx::Error> {
         let mut q = sqlx::query_as::<_, T>(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_all(pool).await
+        q.fetch_all(executor).await
     }
 
     /// Fetches exactly one row, returning an error if zero or more than one row is found.
-    pub async fn fetch_one(self, pool: &PgPool) -> Result<T, sqlx::Error> {
+    pub async fn fetch_one<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<T, sqlx::Error> {
         let mut q = sqlx::query_as::<_, T>(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_one(pool).await
+        q.fetch_one(executor).await
     }
 
     /// Fetches at most one row, returning `None` if no rows match.
-    pub async fn fetch_optional(self, pool: &PgPool) -> Result<Option<T>, sqlx::Error> {
+    pub async fn fetch_optional<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<Option<T>, sqlx::Error> {
         let mut q = sqlx::query_as::<_, T>(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_optional(pool).await
+        q.fetch_optional(executor).await
     }
 
     /// Binds all parameters and executes the query, returning the raw result.
-    pub async fn execute(self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
+    pub async fn execute<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<PgQueryResult, sqlx::Error> {
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.execute(pool).await
+        q.execute(executor).await
+    }
+
+    /// Runs a COUNT(*) query and the SELECT query, returning (items, total_count).
+    pub async fn fetch_paginated(
+        self,
+        pool: &PgPool,
+    ) -> Result<(Vec<T>, i64), sqlx::Error> {
+        let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _sq", self.sql);
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+        for b in &self.binds {
+            count_q = count_q.bind(b.clone());
+        }
+        let total: i64 = count_q.fetch_one(&*pool).await?;
+
+        let mut q = sqlx::query_as::<_, T>(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        let items = q.fetch_all(&*pool).await?;
+
+        Ok((items, total))
     }
 }
 
@@ -175,30 +220,39 @@ where
     T: Send + Unpin,
 {
     /// Fetches exactly one scalar value, returning an error if no rows match.
-    pub async fn fetch_one(self, pool: &PgPool) -> Result<T, sqlx::Error> {
+    pub async fn fetch_one<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<T, sqlx::Error> {
         let mut q = sqlx::query_scalar::<_, T>(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_one(pool).await
+        q.fetch_one(executor).await
     }
 
     /// Fetches at most one scalar value, returning `None` if no rows match.
-    pub async fn fetch_optional(self, pool: &PgPool) -> Result<Option<T>, sqlx::Error> {
+    pub async fn fetch_optional<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<Option<T>, sqlx::Error> {
         let mut q = sqlx::query_scalar::<_, T>(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_optional(pool).await
+        q.fetch_optional(executor).await
     }
 
     /// Fetches all matching scalar values.
-    pub async fn fetch_all(self, pool: &PgPool) -> Result<Vec<T>, sqlx::Error> {
+    pub async fn fetch_all<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+    ) -> Result<Vec<T>, sqlx::Error> {
         let mut q = sqlx::query_scalar::<_, T>(&self.sql);
         for b in self.binds {
             q = q.bind(b);
         }
-        q.fetch_all(pool).await
+        q.fetch_all(executor).await
     }
 }
 

@@ -9,6 +9,7 @@ pub enum SqlQueryError {
     InsertValuesAlreadySet,
     DeleteRequiresFilterOrDeleteAll,
     CaseRequiresThenAndElse,
+    JsonbTextEqMissingArgs,
 }
 
 impl fmt::Display for SqlQueryError {
@@ -25,6 +26,9 @@ impl fmt::Display for SqlQueryError {
             }
             Self::CaseRequiresThenAndElse => {
                 write!(f, "CASE requires both .then() and .else_()")
+            }
+            Self::JsonbTextEqMissingArgs => {
+                write!(f, "jsonb_text_eq requires both key and value")
             }
         }
     }

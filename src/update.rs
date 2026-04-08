@@ -16,6 +16,7 @@ pub struct SqlUpdate {
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
     ctes: Vec<Cte>,
+    include_nulls: bool,
 }
 
 impl SqlUpdate {
@@ -31,6 +32,7 @@ impl SqlUpdate {
             filters: Vec::new(),
             returning: Returning::None,
             ctes,
+            include_nulls: false,
         }
     }
 
@@ -71,6 +73,12 @@ impl SqlUpdate {
         self
     }
 
+    /// Forces SET clauses with NULL values to be included (normally skipped).
+    pub fn include_nulls(mut self) -> Self {
+        self.include_nulls = true;
+        self
+    }
+
     /// Returns true if at least one SET clause with a non-null value has been added.
     pub fn has_non_null_sets(&self) -> bool {
         self.set_clauses.iter().any(|r| {
@@ -87,13 +95,19 @@ impl SqlBase for SqlUpdate {
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
 
-        for (i, result) in self.set_clauses.into_iter().enumerate() {
-            if i > 0 {
+        let include_nulls = self.include_nulls;
+        let mut set_count = 0;
+        for result in self.set_clauses {
+            let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+            if !include_nulls && params.iter().all(|b| matches!(b, SqlParam::Null)) && !params.is_empty() {
+                continue;
+            }
+            if set_count > 0 {
                 sql.push_str(", ");
             }
-            let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
             sql.push_str(&clause);
             binds.extend(params);
+            set_count += 1;
         }
 
         if !self.from_tables.is_empty() {
@@ -294,5 +308,26 @@ mod tests {
                 SqlParam::String("hello".into())
             ],
         );
+    }
+
+    #[test]
+    fn update_skips_null_sets_by_default() {
+        let (sql, binds) = build(
+            SqlUpdate::new::<Users>()
+                .set([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, SqlParam::Null)]),
+        );
+        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1"#);
+        assert_eq!(binds, vec![SqlParam::String("alice".into())]);
+    }
+
+    #[test]
+    fn update_include_nulls() {
+        let (sql, binds) = build(
+            SqlUpdate::new::<Users>()
+                .set([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, SqlParam::Null)])
+                .include_nulls(),
+        );
+        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1, "users".age = $2"#);
+        assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::Null]);
     }
 }

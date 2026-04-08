@@ -179,6 +179,17 @@ impl<T: Table> SqlExpr<T> {
         Self::empty().col(col).op(SqlOp::JsonGetText).val(key.into())
     }
 
+    /// Creates a col ->> key = val JSONB text equality check.
+    pub fn jsonb_text_eq(
+        col: T::Col,
+        key: impl Into<SqlParam>,
+        val: impl Into<SqlParam>,
+    ) -> Self {
+        let mut e = Self::empty().col(col).op(SqlOp::JsonGetTextEq).val(key.into());
+        e.val2 = Some(val.into());
+        e
+    }
+
     /// Creates an = ANY(val) check on the given column.
     pub fn any(col: T::Col, val: impl Into<SqlParam>) -> Self {
         Self::empty().col(col).op(SqlOp::Any).val(val.into())
@@ -215,8 +226,8 @@ impl<T: Table> SqlExpr<T> {
     }
 
     /// Sets the bound parameter value for this expression.
-    pub fn val(mut self, val: SqlParam) -> Self {
-        self.val = Some(val);
+    pub fn val(mut self, val: impl Into<SqlParam>) -> Self {
+        self.val = Some(val.into());
         self
     }
 
@@ -295,6 +306,14 @@ impl<T: Table> SqlExpr<T> {
                     return Err(SqlQueryError::BetweenMissingBounds);
                 }
                 write!(out, " BETWEEN $# AND $#").unwrap();
+                binds.push(self.val.unwrap());
+                binds.push(self.val2.unwrap());
+            }
+            Some(SqlOp::JsonGetTextEq) => {
+                if self.val.is_none() || self.val2.is_none() {
+                    return Err(SqlQueryError::JsonbTextEqMissingArgs);
+                }
+                write!(out, " ->> $# = $#").unwrap();
                 binds.push(self.val.unwrap());
                 binds.push(self.val2.unwrap());
             }
@@ -413,6 +432,7 @@ pub enum SqlOp {
     All,
     JsonGet,
     JsonGetText,
+    JsonGetTextEq,
     JsonPath,
     JsonPathText,
 }
@@ -464,6 +484,7 @@ impl AsRef<str> for SqlOp {
             Self::All => "= ALL",
             Self::JsonGet => "->",
             Self::JsonGetText => "->>",
+            Self::JsonGetTextEq => "->>",
             Self::JsonPath => "#>",
             Self::JsonPathText => "#>>",
         }
@@ -977,5 +998,25 @@ mod tests {
     fn col_helper_chaining() {
         let e = TC::Name.eq("alice").and(TC::Age.gt(18i32));
         assert_eq!(e.eval().unwrap().0, r#"("test_table".name = $# AND "test_table".age > $#)"#);
+    }
+
+    #[test]
+    fn jsonb_text_eq() {
+        let (sql, binds) = Expr::jsonb_text_eq(TC::Name, "key", "value").eval().unwrap();
+        assert_eq!(sql, r#""test_table".name ->> $# = $#"#);
+        assert_eq!(binds, vec![SqlParam::String("key".into()), SqlParam::String("value".into())]);
+    }
+
+    #[test]
+    fn col_helper_jsonb_text_eq() {
+        let (sql, binds) = TC::Name.jsonb_text_eq("path", "expected").eval().unwrap();
+        assert_eq!(sql, r#""test_table".name ->> $# = $#"#);
+        assert_eq!(binds, vec![SqlParam::String("path".into()), SqlParam::String("expected".into())]);
+    }
+
+    #[test]
+    fn err_jsonb_text_eq_missing_args() {
+        let e = Expr::empty().col(TC::Name).op(SqlOp::JsonGetTextEq).val(SqlParam::String("key".into()));
+        assert!(matches!(e.eval(), Err(SqlQueryError::JsonbTextEqMissingArgs)));
     }
 }
