@@ -99,7 +99,10 @@ impl SqlBase for SqlUpdate {
         let mut set_count = 0;
         for result in self.set_clauses {
             let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-            if !include_nulls && params.iter().all(|b| matches!(b, SqlParam::Null)) && !params.is_empty() {
+            if !include_nulls
+                && params.iter().all(|b| matches!(b, SqlParam::Null))
+                && !params.is_empty()
+            {
                 continue;
             }
             if set_count > 0 {
@@ -165,7 +168,7 @@ mod tests {
 
     fn build(update: SqlUpdate) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(update).unwrap();
-        let bq = uq.build();
+        let bq = uq.bind();
         (bq.sql, bq.binds)
     }
 
@@ -312,10 +315,11 @@ mod tests {
 
     #[test]
     fn update_skips_null_sets_by_default() {
-        let (sql, binds) = build(
-            SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, SqlParam::Null)]),
-        );
+        let (sql, binds) =
+            build(SqlUpdate::new::<Users>().set([
+                UExpr::eq(UsersCol::Name, "alice"),
+                UExpr::eq(UsersCol::Age, SqlParam::Null),
+            ]));
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }

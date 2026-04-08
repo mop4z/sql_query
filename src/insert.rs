@@ -103,6 +103,12 @@ impl<T: Table> SqlInsert<T> {
         self.returning = Returning::All;
         self
     }
+
+    /// Explicitly opts out of a RETURNING clause (fire-and-forget insert).
+    pub fn no_returning(mut self) -> Self {
+        self.returning = Returning::None;
+        self
+    }
 }
 
 impl<T: Table> SqlBase for SqlInsert<T> {
@@ -190,7 +196,7 @@ mod tests {
 
     fn build(insert: SqlInsert<Users>) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(insert).unwrap();
-        let bq = uq.build();
+        let bq = uq.bind();
         (bq.sql, bq.binds)
     }
 

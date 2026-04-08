@@ -20,8 +20,8 @@ pub struct SqlSelect {
     having: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     group_by: Vec<String>,
     order_by: Vec<String>,
-    limit: Option<u32>,
-    offset: Option<u32>,
+    limit: Option<u64>,
+    offset: Option<u64>,
     distinct: bool,
     ctes: Vec<Cte>,
 }
@@ -89,13 +89,13 @@ impl SqlSelect {
     }
 
     /// Sets the maximum number of rows to return.
-    pub fn limit(mut self, n: u32) -> Self {
+    pub fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self
     }
 
     /// Sets the number of rows to skip before returning results.
-    pub fn offset(mut self, n: u32) -> Self {
+    pub fn offset(mut self, n: u64) -> Self {
         self.offset = Some(n);
         self
     }
@@ -204,7 +204,7 @@ mod tests {
 
     fn build(select: SqlSelect) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(select).unwrap();
-        let bq = uq.build();
+        let bq = uq.bind();
         (bq.sql, bq.binds)
     }
 

@@ -58,6 +58,12 @@ impl<T: Table> SqlDelete<T> {
         self.returning = Returning::All;
         self
     }
+
+    /// Explicitly opts out of a RETURNING clause (fire-and-forget delete).
+    pub fn no_returning(mut self) -> Self {
+        self.returning = Returning::None;
+        self
+    }
 }
 
 impl<T: Table> SqlBase for SqlDelete<T> {
@@ -107,7 +113,7 @@ mod tests {
 
     fn build(delete: SqlDelete<Users>) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(delete).unwrap();
-        let bq = uq.build();
+        let bq = uq.bind();
         (bq.sql, bq.binds)
     }
 

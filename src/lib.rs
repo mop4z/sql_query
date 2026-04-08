@@ -78,23 +78,20 @@ impl SqlQ {
         SqlUpdate::new::<T>()
     }
 
-    /// Builds a SELECT * WHERE id = $1 query for a single row by primary key.
+    /// Builds a ```SELECT * WHERE id = $1``` query for a single row by primary key.
     pub fn select_one_id<T: Table>(id: T::Id) -> Result<BoundQueryAs<T>, sqlx::Error>
     where
         T::Col: SqlColId,
     {
-        Ok(Self::select::<T>()
-            .filter([SqlExpr::<T>::eq(T::Col::id(), id)])
-            .build()?
-            .build_as::<T>())
+        Ok(Self::select::<T>().filter([SqlExpr::<T>::eq(T::Col::id(), id)]).build()?.bind_as::<T>())
     }
 
-    /// Builds a DELETE WHERE id = $1 query for a single row by primary key.
+    /// Builds a ```DELETE WHERE id = $1``` query for a single row by primary key.
     pub fn delete_one_id<T: Table>(id: T::Id) -> Result<BoundQuery, sqlx::Error>
     where
         T::Col: SqlColId,
     {
-        Ok(Self::delete::<T>().filter([SqlExpr::<T>::eq(T::Col::id(), id)]).build()?.build())
+        Ok(Self::delete::<T>().filter([SqlExpr::<T>::eq(T::Col::id(), id)]).build()?.bind())
     }
 
     pub fn with(ctes: impl IntoIterator<Item = (&'static str, impl SqlBase)>) -> SqlWith {

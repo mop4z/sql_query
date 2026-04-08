@@ -180,11 +180,7 @@ impl<T: Table> SqlExpr<T> {
     }
 
     /// Creates a col ->> key = val JSONB text equality check.
-    pub fn jsonb_text_eq(
-        col: T::Col,
-        key: impl Into<SqlParam>,
-        val: impl Into<SqlParam>,
-    ) -> Self {
+    pub fn jsonb_text_eq(col: T::Col, key: impl Into<SqlParam>, val: impl Into<SqlParam>) -> Self {
         let mut e = Self::empty().col(col).op(SqlOp::JsonGetTextEq).val(key.into());
         e.val2 = Some(val.into());
         e
@@ -1011,12 +1007,18 @@ mod tests {
     fn col_helper_jsonb_text_eq() {
         let (sql, binds) = TC::Name.jsonb_text_eq("path", "expected").eval().unwrap();
         assert_eq!(sql, r#""test_table".name ->> $# = $#"#);
-        assert_eq!(binds, vec![SqlParam::String("path".into()), SqlParam::String("expected".into())]);
+        assert_eq!(
+            binds,
+            vec![SqlParam::String("path".into()), SqlParam::String("expected".into())]
+        );
     }
 
     #[test]
     fn err_jsonb_text_eq_missing_args() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::JsonGetTextEq).val(SqlParam::String("key".into()));
+        let e = Expr::empty()
+            .col(TC::Name)
+            .op(SqlOp::JsonGetTextEq)
+            .val(SqlParam::String("key".into()));
         assert!(matches!(e.eval(), Err(SqlQueryError::JsonbTextEqMissingArgs)));
     }
 }

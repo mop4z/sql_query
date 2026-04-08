@@ -75,19 +75,19 @@ impl<'q> UnbindedQuery<'q> {
     }
 
     /// Renumbers placeholders and produces a `BoundQuery` for execution.
-    pub fn build(self) -> BoundQuery {
+    pub fn bind(self) -> BoundQuery {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQuery { sql, binds: self.binds }
     }
 
     /// Renumbers placeholders and produces a `BoundQueryAs<T>` for typed row fetching.
-    pub fn build_as<T>(self) -> BoundQueryAs<T> {
+    pub fn bind_as<T>(self) -> BoundQueryAs<T> {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQueryAs { sql, binds: self.binds, _t: PhantomData }
     }
 
     /// Renumbers placeholders and produces a `BoundQueryScalar<T>` for single-column fetching.
-    pub fn build_scalar<T>(self) -> BoundQueryScalar<T> {
+    pub fn bind_scalar<T>(self) -> BoundQueryScalar<T> {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQueryScalar { sql, binds: self.binds, _t: PhantomData }
     }
@@ -193,10 +193,7 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
     }
 
     /// Runs a COUNT(*) query and the SELECT query, returning (items, total_count).
-    pub async fn fetch_paginated(
-        self,
-        pool: &PgPool,
-    ) -> Result<(Vec<T>, i64), sqlx::Error> {
+    pub async fn fetch_paginated(self, pool: &PgPool) -> Result<(Vec<T>, i64), sqlx::Error> {
         let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _sq", self.sql);
         let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
         for b in &self.binds {
