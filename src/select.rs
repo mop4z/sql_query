@@ -6,6 +6,7 @@ use crate::{
         Table, UnbindedQuery,
         error::SqlQueryError,
         expr::{SqlExpr, SqlJoin, SqlOp, SqlOrder},
+        push_conditions,
         value::SqlParam,
     },
 };
@@ -116,31 +117,18 @@ impl SqlBase for SqlSelect {
 
         let mut qb = QueryBuilder::new(sql);
         let mut binds = vec![];
-        if !self.filters.is_empty() {
-            qb.push(" WHERE 1=1");
-            for result in self.filters {
-                let (filter, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-                binds.extend(params);
-                qb.push(format!(" AND {filter}"));
-            }
-        }
+        push_conditions("WHERE", self.filters, &mut qb, &mut binds)?;
 
         if !self.group_by.is_empty() {
-            qb.push(format!(" GROUP BY {}", self.group_by.join(", ")));
+            qb.push(" GROUP BY ");
+            qb.push(self.group_by.join(", "));
         }
 
-        if !self.having.is_empty() {
-            qb.push(" HAVING 1=1");
-            for result in self.having {
-                let (condition, params) =
-                    result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-                binds.extend(params);
-                qb.push(format!(" AND {condition}"));
-            }
-        }
+        push_conditions("HAVING", self.having, &mut qb, &mut binds)?;
 
         if !self.order_by.is_empty() {
-            qb.push(format!(" ORDER BY {}", self.order_by.join(", ")));
+            qb.push(" ORDER BY ");
+            qb.push(self.order_by.join(", "));
         }
 
         if let Some(limit) = self.limit {

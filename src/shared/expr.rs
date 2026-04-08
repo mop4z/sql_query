@@ -7,10 +7,10 @@ use crate::{
 };
 
 pub struct SqlExpr<T: Table> {
-    col: Option<T::Col>,
+    pub(crate) col: Option<T::Col>,
     col_fn: Option<SqlFn>,
-    op: Option<SqlOp>,
-    pub val: Option<SqlParam>,
+    pub(crate) op: Option<SqlOp>,
+    pub(crate) val: Option<SqlParam>,
     val2: Option<SqlParam>,
     val_fn: Option<SqlFn>,
     alias: Option<&'static str>,
@@ -131,7 +131,7 @@ impl<T: Table> SqlExpr<T> {
                     return Err(SqlQueryError::ExistsMissingSelect);
                 }
                 write!(out, "{} ", self.op.as_ref().unwrap().as_ref()).unwrap();
-                Self::write_val(self.select, &self.val, &self.val_fn, &mut out, &mut binds);
+                Self::write_val(self.select, self.val, &self.val_fn, &mut out, &mut binds);
             }
             Some(SqlOp::Between) => {
                 if self.val.is_none() || self.val2.is_none() {
@@ -150,21 +150,23 @@ impl<T: Table> SqlExpr<T> {
             }
             Some(op) => {
                 write!(out, " {} ", op.as_ref()).unwrap();
-                Self::write_val(self.select, &self.val, &self.val_fn, &mut out, &mut binds);
+                Self::write_val(self.select, self.val, &self.val_fn, &mut out, &mut binds);
             }
             None if self.val.is_some() || self.val_fn.is_some() || self.select.is_some() => {
-                Self::write_val(self.select, &self.val, &self.val_fn, &mut out, &mut binds);
+                Self::write_val(self.select, self.val, &self.val_fn, &mut out, &mut binds);
             }
             None => {}
         }
 
         if let Some(right) = self.and {
             let (right_sql, right_binds) = right.eval()?;
-            out = format!("({out} AND {right_sql})");
+            out.insert(0, '(');
+            write!(out, " AND {right_sql})").unwrap();
             binds.extend(right_binds);
         } else if let Some(right) = self.or {
             let (right_sql, right_binds) = right.eval()?;
-            out = format!("({out} OR {right_sql})");
+            out.insert(0, '(');
+            write!(out, " OR {right_sql})").unwrap();
             binds.extend(right_binds);
         }
 
@@ -177,7 +179,7 @@ impl<T: Table> SqlExpr<T> {
 
     fn write_val(
         select: Option<SqlSelect>,
-        val: &Option<SqlParam>,
+        val: Option<SqlParam>,
         val_fn: &Option<SqlFn>,
         out: &mut String,
         binds: &mut Vec<SqlParam>,
@@ -194,14 +196,14 @@ impl<T: Table> SqlExpr<T> {
             Some(f @ (SqlFn::True | SqlFn::False)) => write!(out, "{}", f.as_ref()),
             Some(f) => {
                 write!(out, "{}($1)", f.as_ref()).unwrap();
-                if let Some(v) = val.clone() {
+                if let Some(v) = val {
                     binds.push(v);
                 }
                 return;
             }
             None => {
                 write!(out, "$1").unwrap();
-                if let Some(v) = val.clone() {
+                if let Some(v) = val {
                     binds.push(v);
                 }
                 return;

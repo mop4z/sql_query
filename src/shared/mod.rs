@@ -13,6 +13,7 @@ mod unbinded_query;
 pub mod value;
 
 pub use unbinded_query::UnbindedQuery;
+pub(crate) use unbinded_query::push_conditions;
 
 use crate::shared::value::SqlParam;
 

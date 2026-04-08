@@ -5,27 +5,27 @@ use sqlx::{
     postgres::{PgPool, PgQueryResult, PgRow},
 };
 
-use crate::shared::value::SqlParam;
+use crate::shared::{error::SqlQueryError, value::SqlParam};
 
 pub struct UnbindedQuery<'q> {
-    pub qb: QueryBuilder<'q, Postgres>,
-    pub binds: Vec<SqlParam>,
+    pub(crate) qb: QueryBuilder<'q, Postgres>,
+    pub(crate) binds: Vec<SqlParam>,
 }
 
 pub struct BoundQuery {
-    pub sql: String,
-    pub binds: Vec<SqlParam>,
+    pub(crate) sql: String,
+    pub(crate) binds: Vec<SqlParam>,
 }
 
 pub struct BoundQueryAs<T> {
-    pub sql: String,
-    pub binds: Vec<SqlParam>,
+    pub(crate) sql: String,
+    pub(crate) binds: Vec<SqlParam>,
     _t: PhantomData<T>,
 }
 
 pub struct BoundQueryScalar<T> {
-    pub sql: String,
-    pub binds: Vec<SqlParam>,
+    pub(crate) sql: String,
+    pub(crate) binds: Vec<SqlParam>,
     _t: PhantomData<T>,
 }
 
@@ -48,6 +48,27 @@ fn renumber_placeholders(sql: &str) -> String {
         }
     }
     out
+}
+
+pub(crate) fn push_conditions(
+    keyword: &str,
+    conditions: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
+    qb: &mut QueryBuilder<'_, Postgres>,
+    binds: &mut Vec<SqlParam>,
+) -> Result<(), sqlx::Error> {
+    if conditions.is_empty() {
+        return Ok(());
+    }
+    qb.push(" ");
+    qb.push(keyword);
+    qb.push(" 1=1");
+    for result in conditions {
+        let (filter, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+        binds.extend(params);
+        qb.push(" AND ");
+        qb.push(&filter);
+    }
+    Ok(())
 }
 
 impl<'q> UnbindedQuery<'q> {

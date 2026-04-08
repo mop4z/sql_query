@@ -1,12 +1,16 @@
 extern crate self as sql_query;
 
 use crate::{
+    delete::SqlDelete,
+    insert::SqlInsert,
     select::SqlSelect,
     shared::{Table, UnbindedQuery},
 };
 
 pub use sql_query_derive::SqlCols;
 
+mod delete;
+mod insert;
 mod select;
 mod shared;
 
@@ -29,5 +33,13 @@ pub struct SqlQ;
 impl SqlQ {
     pub fn select<T: Table>() -> SqlSelect {
         SqlSelect::new::<T>()
+    }
+
+    pub fn delete<T: Table>() -> SqlDelete<T> {
+        SqlDelete::new()
+    }
+
+    pub fn insert<T: Table>() -> SqlInsert<T> {
+        SqlInsert::new()
     }
 }
