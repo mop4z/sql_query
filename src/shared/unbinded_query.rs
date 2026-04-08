@@ -102,6 +102,33 @@ impl BoundQuery {
         }
         q.execute(pool).await
     }
+
+    /// Fetches all matching rows as raw `PgRow`s.
+    pub async fn fetch_all(self, pool: &PgPool) -> Result<Vec<PgRow>, sqlx::Error> {
+        let mut q = sqlx::query(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        q.fetch_all(pool).await
+    }
+
+    /// Fetches exactly one row as a raw `PgRow`.
+    pub async fn fetch_one(self, pool: &PgPool) -> Result<PgRow, sqlx::Error> {
+        let mut q = sqlx::query(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        q.fetch_one(pool).await
+    }
+
+    /// Fetches at most one row as a raw `PgRow`, returning `None` if no rows match.
+    pub async fn fetch_optional(self, pool: &PgPool) -> Result<Option<PgRow>, sqlx::Error> {
+        let mut q = sqlx::query(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        q.fetch_optional(pool).await
+    }
 }
 
 impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
@@ -131,6 +158,15 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         }
         q.fetch_optional(pool).await
     }
+
+    /// Binds all parameters and executes the query, returning the raw result.
+    pub async fn execute(self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
+        let mut q = sqlx::query(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        q.execute(pool).await
+    }
 }
 
 impl<T> BoundQueryScalar<T>
@@ -154,6 +190,15 @@ where
             q = q.bind(b);
         }
         q.fetch_optional(pool).await
+    }
+
+    /// Fetches all matching scalar values.
+    pub async fn fetch_all(self, pool: &PgPool) -> Result<Vec<T>, sqlx::Error> {
+        let mut q = sqlx::query_scalar::<_, T>(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        q.fetch_all(pool).await
     }
 }
 
