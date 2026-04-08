@@ -3,7 +3,7 @@
 //! All queries start from [`SqlQ`]:
 //! ```ignore
 //! let users = SqlQ::select::<Users>()
-//!     .filter([UExpr::eq(UsersCol::Name, "alice")])
+//!     .filter([UsersCol::Name.eq("alice")])
 //!     .build()?
 //!     .build_as::<Users>()
 //!     .fetch_all(&pool).await?;
@@ -14,16 +14,16 @@ extern crate self as sql_query;
 use crate::{
     delete::SqlDelete,
     insert::SqlInsert,
-    select::SqlSelect,
-    shared::{Cte, UnbindedQuery},
+    shared::Cte,
     update::SqlUpdate,
 };
 
+pub use select::SqlSelect;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
     error::SqlQueryError,
     expr::{SqlExpr, SqlFn, SqlJoin, SqlOp, SqlOrder},
-    unbinded_query::{BoundQuery, BoundQueryAs, BoundQueryScalar},
+    unbinded_query::{BoundQuery, BoundQueryAs, BoundQueryScalar, UnbindedQuery},
     value::SqlParam,
 };
 pub use sql_query_derive::{SqlCols, SqlParamEnum};
@@ -34,12 +34,12 @@ mod select;
 mod shared;
 mod update;
 
-/// Internal trait implemented by all statement builders (SELECT, INSERT, UPDATE, DELETE).
-pub(crate) trait SqlBase {
+/// Trait implemented by all statement builders (SELECT, INSERT, UPDATE, DELETE).
+pub trait SqlBase {
     fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error>;
 }
 
-pub(crate) struct SqlWith {
+pub struct SqlWith {
     ctes: Vec<Cte>,
 }
 

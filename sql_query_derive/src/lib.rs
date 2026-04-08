@@ -2,8 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
-/// Derive macro that generates a `{model_snake}_cols` module with a `Col` enum
-/// and SCREAMING_SNAKE_CASE constants for each field.
+/// Derive macro that generates a `{Struct}Col` enum with expression helper methods.
 ///
 /// # Example
 ///
@@ -16,14 +15,14 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 ///     pub currency_type: CurrencyType,
 /// }
 ///
-/// // Generates:
-/// #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::AsRefStr, strum::Display)]
-/// pub enum CurrencyCol {
-///     Id,
-///     Name,
-///     Symbol,
-///     CurrencyType
-/// }
+/// // Generates CurrencyCol enum with variants Id, Name, Symbol, CurrencyType
+/// // plus helper methods: .eq(), .neq(), .gt(), .lt(), .is_null(), .count(), etc.
+/// // and From<CurrencyCol> for SqlExpr<Currency>
+///
+/// // Usage:
+/// CurrencyCol::Name.eq("USD")
+/// CurrencyCol::Id.count().alias("total")
+/// CurrencyCol::Name.into() // SqlExpr<Currency> via From
 /// ```
 #[proc_macro_derive(SqlCols)]
 pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
@@ -66,6 +65,114 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
         }
 
         #col_id_impl
+
+        impl From<#enum_name> for ::sql_query::SqlExpr<#struct_name> {
+            fn from(col: #enum_name) -> Self {
+                ::sql_query::SqlExpr::column(col)
+            }
+        }
+
+        impl #enum_name {
+            pub fn is_null(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::is_null(self)
+            }
+
+            pub fn is_not_null(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::is_not_null(self)
+            }
+
+            pub fn eq(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::eq(self, val)
+            }
+
+            pub fn neq(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::neq(self, val)
+            }
+
+            pub fn gt(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::gt(self, val)
+            }
+
+            pub fn gte(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::gte(self, val)
+            }
+
+            pub fn lt(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::lt(self, val)
+            }
+
+            pub fn lte(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::lte(self, val)
+            }
+
+            pub fn like(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::like(self, val)
+            }
+
+            pub fn ilike(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::ilike(self, val)
+            }
+
+            pub fn in_(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::in_(self, val)
+            }
+
+            pub fn not_in(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::not_in(self, val)
+            }
+
+            pub fn between(self, lo: impl Into<::sql_query::SqlParam>, hi: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::between(self, lo, hi)
+            }
+
+            pub fn in_select(self, select: ::sql_query::SqlSelect) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::in_select(self, select)
+            }
+
+            pub fn not_in_select(self, select: ::sql_query::SqlSelect) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::not_in_select(self, select)
+            }
+
+            pub fn count(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::count(self)
+            }
+
+            pub fn sum(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::sum(self)
+            }
+
+            pub fn avg(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::avg(self)
+            }
+
+            pub fn min(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::min(self)
+            }
+
+            pub fn max(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::max(self)
+            }
+
+            pub fn lower(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::lower(self)
+            }
+
+            pub fn upper(self) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::upper(self)
+            }
+
+            pub fn json_get(self, key: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::json_get(self, key)
+            }
+
+            pub fn json_get_text(self, key: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::json_get_text(self, key)
+            }
+
+            pub fn any(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::SqlExpr<#struct_name> {
+                ::sql_query::SqlExpr::any(self, val)
+            }
+        }
     };
 
     TokenStream::from(expanded)

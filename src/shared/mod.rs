@@ -200,21 +200,21 @@ macro_rules! define_id {
             }
         }
 
-        // impl ::ts_rs::TS for $name {
-        //     type WithoutGenerics = Self;
-        //     type OptionInnerType = Self;
+        impl ::ts_rs::TS for $name {
+            type WithoutGenerics = Self;
+            type OptionInnerType = Self;
 
-        //     fn name(cfg: &::ts_rs::Config) -> String {
-        //         <::uuid::Uuid as ::ts_rs::TS>::name(cfg)
-        //     }
+            fn name(cfg: &::ts_rs::Config) -> String {
+                <::uuid::Uuid as ::ts_rs::TS>::name(cfg)
+            }
 
-        //     fn inline(cfg: &::ts_rs::Config) -> String {
-        //         <::uuid::Uuid as ::ts_rs::TS>::inline(cfg)
-        //     }
+            fn inline(cfg: &::ts_rs::Config) -> String {
+                <::uuid::Uuid as ::ts_rs::TS>::inline(cfg)
+            }
 
-        //     fn output_path() -> Option<std::path::PathBuf> {
-        //         None
-        //     }
-        // }
+            fn output_path() -> Option<std::path::PathBuf> {
+                None
+            }
+        }
     };
 }

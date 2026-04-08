@@ -902,4 +902,80 @@ mod tests {
         let e = Expr::eq(TC::Age, 18i32).else_(Expr::empty().val(SqlParam::String("adult".into())));
         assert!(matches!(e.eval(), Err(SqlQueryError::CaseRequiresThenAndElse)));
     }
+
+    // --- Col helper methods ---
+
+    #[test]
+    fn col_helper_eq() {
+        let (sql, binds) = TC::Name.eq("alice").eval().unwrap();
+        assert_eq!(sql, r#""test_table".name = $#"#);
+        assert_eq!(binds, vec![SqlParam::String("alice".into())]);
+    }
+
+    #[test]
+    fn col_helper_neq() {
+        let (sql, _) = TC::Name.neq("bob").eval().unwrap();
+        assert_eq!(sql, r#""test_table".name != $#"#);
+    }
+
+    #[test]
+    fn col_helper_gt_lt() {
+        assert_eq!(TC::Age.gt(10i32).eval().unwrap().0, r#""test_table".age > $#"#);
+        assert_eq!(TC::Age.lt(10i32).eval().unwrap().0, r#""test_table".age < $#"#);
+        assert_eq!(TC::Age.gte(10i32).eval().unwrap().0, r#""test_table".age >= $#"#);
+        assert_eq!(TC::Age.lte(10i32).eval().unwrap().0, r#""test_table".age <= $#"#);
+    }
+
+    #[test]
+    fn col_helper_is_null() {
+        assert_eq!(TC::Name.is_null().eval().unwrap().0, r#""test_table".name IS NULL"#);
+        assert_eq!(TC::Name.is_not_null().eval().unwrap().0, r#""test_table".name IS NOT NULL"#);
+    }
+
+    #[test]
+    fn col_helper_like_ilike() {
+        assert_eq!(TC::Name.like("%alice%").eval().unwrap().0, r#""test_table".name LIKE $#"#);
+        assert_eq!(TC::Name.ilike("%alice%").eval().unwrap().0, r#""test_table".name ILIKE $#"#);
+    }
+
+    #[test]
+    fn col_helper_in_not_in() {
+        assert_eq!(TC::Age.in_(SqlParam::I32(1)).eval().unwrap().0, r#""test_table".age IN $#"#);
+        assert_eq!(
+            TC::Age.not_in(SqlParam::I32(1)).eval().unwrap().0,
+            r#""test_table".age NOT IN $#"#
+        );
+    }
+
+    #[test]
+    fn col_helper_between() {
+        let (sql, binds) = TC::Age.between(18i32, 65i32).eval().unwrap();
+        assert_eq!(sql, r#""test_table".age BETWEEN $# AND $#"#);
+        assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I32(65)]);
+    }
+
+    #[test]
+    fn col_helper_count() {
+        assert_eq!(TC::Id.count().eval().unwrap().0, r#"COUNT("test_table".id)"#);
+    }
+
+    #[test]
+    fn col_helper_aggregates() {
+        assert_eq!(TC::Age.sum().eval().unwrap().0, r#"SUM("test_table".age)"#);
+        assert_eq!(TC::Age.avg().eval().unwrap().0, r#"AVG("test_table".age)"#);
+        assert_eq!(TC::Age.min().eval().unwrap().0, r#"MIN("test_table".age)"#);
+        assert_eq!(TC::Age.max().eval().unwrap().0, r#"MAX("test_table".age)"#);
+    }
+
+    #[test]
+    fn col_helper_lower_upper() {
+        assert_eq!(TC::Name.lower().eval().unwrap().0, r#"LOWER("test_table".name)"#);
+        assert_eq!(TC::Name.upper().eval().unwrap().0, r#"UPPER("test_table".name)"#);
+    }
+
+    #[test]
+    fn col_helper_chaining() {
+        let e = TC::Name.eq("alice").and(TC::Age.gt(18i32));
+        assert_eq!(e.eval().unwrap().0, r#"("test_table".name = $# AND "test_table".age > $#)"#);
+    }
 }

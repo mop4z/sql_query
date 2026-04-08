@@ -51,24 +51,20 @@ SqlQ::select/insert/update/delete() -> builder -> .build() -> BoundQuery -> .exe
 
 ```rust
 use sql_query::{SqlQ, SqlExpr, SqlOp, SqlFn, SqlOrder, SqlParam};
-
-type UExpr = SqlExpr<Users>;
+use UsersCol as UC;
 
 // SELECT * FROM "users"
 let query = SqlQ::select::<Users>().build()?.build_as::<Users>();
 
 // SELECT "users".name, "users".age FROM "users"
 let query = SqlQ::select::<Users>()
-    .from([UExpr::column(UsersCol::Name), UExpr::column(UsersCol::Age)])
+    .from([UC::Name.into(), UC::Age.into()])
     .build()?
     .build_as::<Users>();
 
 // SELECT * FROM "users" WHERE "users".name = $1 AND "users".age > $2
 let query = SqlQ::select::<Users>()
-    .filter([
-        UExpr::eq(UsersCol::Name, "alice"),
-        UExpr::gt(UsersCol::Age, 18i32),
-    ])
+    .filter([UC::Name.eq("alice"), UC::Age.gt(18i32)])
     .build()?
     .build_as::<Users>();
 
@@ -78,9 +74,9 @@ let query = SqlQ::select::<Users>()
 // LIMIT $2 OFFSET $3
 let query = SqlQ::select::<Users>()
     .distinct()
-    .from([UExpr::column(UsersCol::Name)])
-    .filter([UExpr::gte(UsersCol::Age, 18i32)])
-    .order_by(UExpr::column(UsersCol::Name), SqlOrder::Asc)
+    .from([UC::Name.into()])
+    .filter([UC::Age.gte(18i32)])
+    .order_by(UC::Name.into(), SqlOrder::Asc)
     .limit(10)
     .offset(20)
     .build()?
@@ -96,8 +92,8 @@ let users: Vec<Users> = query.fetch_all(&pool).await?;
 // SELECT COUNT("users".id) AS total, AVG("users".age) AS avg_age FROM "users"
 SqlQ::select::<Users>()
     .from([
-        UExpr::count(UsersCol::Id).alias("total"),
-        UExpr::avg(UsersCol::Age).alias("avg_age"),
+        UC::Id.count().alias("total"),
+        UC::Age.avg().alias("avg_age"),
     ])
 ```
 
@@ -111,12 +107,12 @@ Available functions: `Count`, `Sum`, `Avg`, `Min`, `Max`, `Lower`, `Upper`, `Len
 // HAVING 1=1 AND COUNT("users".id) = $1
 SqlQ::select::<Users>()
     .from([
-        UExpr::column(UsersCol::Age),
-        UExpr::count(UsersCol::Id).alias("count"),
+        UC::Age.into(),
+        UC::Id.count().alias("count"),
     ])
-    .group_by([UExpr::column(UsersCol::Age)])
+    .group_by([UC::Age.into()])
     .having([
-        UExpr::count(UsersCol::Id).op(SqlOp::Eq).val(5i32),
+        UC::Id.count().op(SqlOp::Eq).val(5i32),
     ])
 ```
 
@@ -124,15 +120,16 @@ SqlQ::select::<Users>()
 
 ```rust
 use sql_query::SqlJoin;
+use PostsCol as PC;
 
 // SELECT * FROM "users"
 // INNER JOIN "posts" ON "posts".user_id = "users".id
 SqlQ::select::<Users>()
     .join::<Posts, Users>(
         SqlJoin::Inner,
-        PExpr::column(PostsCol::UserId),
+        PC::UserId.into(),
         SqlOp::Eq,
-        UExpr::column(UsersCol::Id),
+        UC::Id.into(),
     )
 ```
 
@@ -144,11 +141,11 @@ Join types: `Inner`, `Left`, `Right`, `FullOuter`, `Cross`.
 // SELECT * FROM "users"
 // WHERE "users".id IN (SELECT "posts".user_id FROM "posts" WHERE "posts".active = $1)
 let sub = SqlQ::select::<Posts>()
-    .from([PExpr::column(PostsCol::UserId)])
-    .filter([PExpr::eq(PostsCol::Active, true)]);
+    .from([PC::UserId.into()])
+    .filter([PC::Active.eq(true)]);
 
 SqlQ::select::<Users>()
-    .filter([UExpr::in_select(UsersCol::Id, sub)])
+    .filter([UC::Id.in_select(sub)])
 ```
 
 ### INSERT
@@ -156,10 +153,7 @@ SqlQ::select::<Users>()
 ```rust
 // INSERT INTO "users" (name, age) VALUES ($1, $2)
 SqlQ::insert::<Users>()
-    .values([
-        UExpr::eq(UsersCol::Name, "alice"),
-        UExpr::eq(UsersCol::Age, 30i32),
-    ])?
+    .values([UC::Name.eq("alice"), UC::Age.eq(30i32)])?
     .build()?
     .build()
     .execute(&pool).await?;
@@ -167,8 +161,8 @@ SqlQ::insert::<Users>()
 // Multi-row insert
 SqlQ::insert::<Users>()
     .values_nested([
-        vec![UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)],
-        vec![UExpr::eq(UsersCol::Name, "bob"), UExpr::eq(UsersCol::Age, 25i32)],
+        vec![UC::Name.eq("alice"), UC::Age.eq(30i32)],
+        vec![UC::Name.eq("bob"), UC::Age.eq(25i32)],
     ])?
     .build()?;
 ```
@@ -180,10 +174,10 @@ use sql_query::SqlConflict;
 
 // INSERT ... ON CONFLICT (name) DO UPDATE SET age = EXCLUDED.age
 SqlQ::insert::<Users>()
-    .values([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)])?
+    .values([UC::Name.eq("alice"), UC::Age.eq(30i32)])?
     .on_conflict(SqlConflict::DoUpdate {
-        conflict_cols: vec![UsersCol::Name],
-        update_cols: vec![UsersCol::Age],
+        conflict_cols: vec![UC::Name],
+        update_cols: vec![UC::Age],
     })
 
 // INSERT ... ON CONFLICT DO NOTHING
@@ -196,7 +190,7 @@ SqlQ::insert::<Users>()
     .values([...])?
     .on_conflict(SqlConflict::OnConstraint {
         name: "users_pkey",
-        update_cols: vec![UsersCol::Name, UsersCol::Age],
+        update_cols: vec![UC::Name, UC::Age],
     })
 ```
 
@@ -211,7 +205,7 @@ SqlQ::insert::<Users>()
 // INSERT ... RETURNING "users".id, "users".name
 SqlQ::insert::<Users>()
     .values([...])?
-    .returning([UExpr::column(UsersCol::Id), UExpr::column(UsersCol::Name)])
+    .returning([UC::Id.into(), UC::Name.into()])
 ```
 
 ### UPDATE
@@ -219,15 +213,15 @@ SqlQ::insert::<Users>()
 ```rust
 // UPDATE "users" SET "users".name = $1 WHERE 1=1 AND "users".id = $2 RETURNING *
 SqlQ::update::<Users>()
-    .set([UExpr::eq(UsersCol::Name, "new_name")])
-    .filter([UExpr::eq(UsersCol::Id, 1i32)])
+    .set([UC::Name.eq("new_name")])
+    .filter([UC::Id.eq(1i32)])
     .returning_all()
     .build()?;
 
 // UPDATE with NOW()
 SqlQ::update::<Users>()
     .set([
-        UExpr::column(UsersCol::Name).op(SqlOp::Eq).val_fn(SqlFn::Now),
+        SqlExpr::<Users>::column(UC::Name).op(SqlOp::Eq).val_fn(SqlFn::Now),
     ])
 ```
 
@@ -238,10 +232,10 @@ SqlQ::update::<Users>()
 // FROM "posts"
 // WHERE 1=1 AND "users".id = $2 AND "posts".title = $3
 SqlQ::update::<Users>()
-    .set([UExpr::eq(UsersCol::Name, "updated")])
+    .set([UC::Name.eq("updated")])
     .from::<Posts>()
-    .filter([UExpr::eq(UsersCol::Id, 1i32)])
-    .filter([PExpr::eq(PostsCol::Title, "hello")])
+    .filter([UC::Id.eq(1i32)])
+    .filter([PC::Title.eq("hello")])
 ```
 
 ### DELETE
@@ -249,7 +243,7 @@ SqlQ::update::<Users>()
 ```rust
 // DELETE FROM "users" WHERE 1=1 AND "users".id = $1
 SqlQ::delete::<Users>()
-    .filter([UExpr::eq(UsersCol::Id, 1i32)])
+    .filter([UC::Id.eq(1i32)])
     .build()?;
 
 // DELETE all rows (requires explicit opt-in)
@@ -259,7 +253,7 @@ SqlQ::delete::<Users>()
 
 // DELETE ... RETURNING *
 SqlQ::delete::<Users>()
-    .filter([UExpr::eq(UsersCol::Id, 1i32)])
+    .filter([UC::Id.eq(1i32)])
     .returning_all()
     .build()?;
 ```
@@ -273,21 +267,18 @@ Calling `.build()` without `.filter()` or `.delete_all()` returns an error to pr
 ```rust
 // WHERE 1=1 AND ("users".name = $1 OR "users".name = $2)
 .filter([
-    UExpr::eq(UsersCol::Name, "alice")
-        .or(UExpr::eq(UsersCol::Name, "bob")),
+    UC::Name.eq("alice").or(UC::Name.eq("bob")),
 ])
 
 // WHERE 1=1 AND ("users".name = $1 AND "users".age > $2)
 .filter([
-    UExpr::eq(UsersCol::Name, "alice")
-        .and(UExpr::gt(UsersCol::Age, 18i32)),
+    UC::Name.eq("alice").and(UC::Age.gt(18i32)),
 ])
 
 // Nested: WHERE 1=1 AND ("users".name = $1 OR ("users".name = $2 AND "users".age > $3))
 .filter([
-    UExpr::eq(UsersCol::Name, "alice")
-        .or(UExpr::eq(UsersCol::Name, "bob")
-            .and(UExpr::gt(UsersCol::Age, 30i32))),
+    UC::Name.eq("alice")
+        .or(UC::Name.eq("bob").and(UC::Age.gt(30i32))),
 ])
 ```
 
@@ -295,13 +286,11 @@ Calling `.build()` without `.filter()` or `.delete_all()` returns an error to pr
 
 ```rust
 // WHERE 1=1 AND NOT ("users".name = $1)
-.filter([UExpr::eq(UsersCol::Name, "alice").not()])
+.filter([UC::Name.eq("alice").not()])
 
 // NOT with OR: AND NOT (("users".name = $1 OR "users".name = $2))
 .filter([
-    UExpr::eq(UsersCol::Name, "alice")
-        .or(UExpr::eq(UsersCol::Name, "bob"))
-        .not(),
+    UC::Name.eq("alice").or(UC::Name.eq("bob")).not(),
 ])
 ```
 
@@ -309,9 +298,9 @@ Calling `.build()` without `.filter()` or `.delete_all()` returns an error to pr
 
 ```rust
 // CASE WHEN "users".age = $1 THEN $2 ELSE $3 END AS age_group
-UExpr::eq(UsersCol::Age, 18i32)
-    .then(UExpr::empty().val(SqlParam::String("minor".into())))
-    .else_(UExpr::empty().val(SqlParam::String("adult".into())))
+UC::Age.eq(18i32)
+    .then(SqlExpr::<Users>::empty().val(SqlParam::String("minor".into())))
+    .else_(SqlExpr::<Users>::empty().val(SqlParam::String("adult".into())))
     .alias("age_group")
 ```
 
@@ -321,60 +310,60 @@ Both `.then()` and `.else_()` are required -- using one without the other return
 
 ```rust
 // WHERE 1=1 AND "users".age BETWEEN $1 AND $2
-.filter([UExpr::between(UsersCol::Age, 18i32, 65i32)])
+.filter([UC::Age.between(18i32, 65i32)])
 ```
 
 ### EXISTS / NOT EXISTS
 
 ```rust
 // WHERE 1=1 AND EXISTS (SELECT * FROM "posts" WHERE ...)
-let sub = SqlQ::select::<Posts>().filter([PExpr::eq(PostsCol::Active, true)]);
-.filter([UExpr::exists(sub)])
+let sub = SqlQ::select::<Posts>().filter([PC::Active.eq(true)]);
+.filter([SqlExpr::<Users>::exists(sub)])
 
 // NOT EXISTS
-.filter([UExpr::not_exists(sub)])
+.filter([SqlExpr::<Users>::not_exists(sub)])
 ```
 
 ### LIKE / ILIKE
 
 ```rust
 // WHERE 1=1 AND "users".name LIKE $1
-.filter([UExpr::like(UsersCol::Name, "%alice%")])
+.filter([UC::Name.like("%alice%")])
 
 // Case-insensitive
-.filter([UExpr::ilike(UsersCol::Name, "%alice%")])
+.filter([UC::Name.ilike("%alice%")])
 ```
 
 ### IS NULL / IS NOT NULL
 
 ```rust
-.filter([UExpr::is_null(UsersCol::Email)])
-.filter([UExpr::is_not_null(UsersCol::Email)])
+.filter([UC::Email.is_null()])
+.filter([UC::Email.is_not_null()])
 ```
 
 ### IN / NOT IN
 
 ```rust
 // WHERE 1=1 AND "users".name = ANY ($1)
-.filter([UExpr::any(UsersCol::Name, vec!["alice".to_string(), "bob".to_string()])])
+.filter([UC::Name.any(vec!["alice".to_string(), "bob".to_string()])])
 
 // With subquery
-.filter([UExpr::in_select(UsersCol::Id, sub)])
-.filter([UExpr::not_in_select(UsersCol::Id, sub)])
+.filter([UC::Id.in_select(sub)])
+.filter([UC::Id.not_in_select(sub)])
 ```
 
 ### JSON Operators
 
 ```rust
 // "users".data -> 'key'
-UExpr::json_get(UsersCol::Data, "key")
+UC::Data.json_get("key")
 
 // "users".data ->> 'key'
-UExpr::json_get_text(UsersCol::Data, "key")
+UC::Data.json_get_text("key")
 
 // Verbose form for #> and #>>
-UExpr::column(UsersCol::Data).op(SqlOp::JsonPath).val("{a,b}")
-UExpr::column(UsersCol::Data).op(SqlOp::JsonPathText).val("{a,b}")
+SqlExpr::<Users>::column(UC::Data).op(SqlOp::JsonPath).val("{a,b}")
+SqlExpr::<Users>::column(UC::Data).op(SqlOp::JsonPathText).val("{a,b}")
 ```
 
 ## CTEs (Common Table Expressions)
@@ -382,10 +371,10 @@ UExpr::column(UsersCol::Data).op(SqlOp::JsonPathText).val("{a,b}")
 ```rust
 // WITH active AS (SELECT * FROM "users" WHERE ...) SELECT * FROM "users" WHERE ...
 SqlQ::with([
-    ("active", SqlQ::select::<Users>().filter([UExpr::eq(UsersCol::Age, 18i32)])),
+    ("active", SqlQ::select::<Users>().filter([UC::Age.eq(18i32)])),
 ])
 .select::<Users>()
-.filter([UExpr::eq(UsersCol::Name, "alice")])
+.filter([UC::Name.eq("alice")])
 ```
 
 CTEs work with all statement types: `.select()`, `.delete()`, `.insert()`, `.update()`.
@@ -394,8 +383,8 @@ Multiple CTEs:
 
 ```rust
 SqlQ::with([
-    ("young", SqlQ::select::<Users>().filter([UExpr::eq(UsersCol::Age, 18i32)])),
-    ("old", SqlQ::select::<Users>().filter([UExpr::eq(UsersCol::Age, 65i32)])),
+    ("young", SqlQ::select::<Users>().filter([UC::Age.eq(18i32)])),
+    ("old", SqlQ::select::<Users>().filter([UC::Age.eq(65i32)])),
 ])
 .select::<Users>()
 ```
@@ -440,42 +429,43 @@ pub enum CurrencyType {
 }
 
 // Use directly in expressions -- the Postgres enum OID is preserved
-SqlExpr::eq(CurrencyCol::CurrencyType, CurrencyType::Fiat)
+CurrencyCol::CurrencyType.eq(CurrencyType::Fiat)
 ```
 
 ## Expression Helpers Reference
 
-Shorthand constructors on `SqlExpr<T>` that replace verbose builder chains:
+Helpers are available both as methods on `Col` enums and as associated functions on `SqlExpr<T>`. The Col method style is preferred:
 
-| Helper | Equivalent |
+| Col method | SqlExpr equivalent |
 |--------|-----------|
-| `eq(col, val)` | `.column(col).op(SqlOp::Eq).val(val)` |
-| `neq(col, val)` | `.column(col).op(SqlOp::Neq).val(val)` |
-| `gt(col, val)` | `.column(col).op(SqlOp::Gt).val(val)` |
-| `gte(col, val)` | `.column(col).op(SqlOp::Gte).val(val)` |
-| `lt(col, val)` | `.column(col).op(SqlOp::Lt).val(val)` |
-| `lte(col, val)` | `.column(col).op(SqlOp::Lte).val(val)` |
-| `like(col, val)` | `.column(col).op(SqlOp::Like).val(val)` |
-| `ilike(col, val)` | `.column(col).op(SqlOp::ILike).val(val)` |
-| `in_(col, val)` | `.column(col).op(SqlOp::In).val(val)` |
-| `not_in(col, val)` | `.column(col).op(SqlOp::NotIn).val(val)` |
-| `is_null(col)` | `.column(col).op(SqlOp::IsNull)` |
-| `is_not_null(col)` | `.column(col).op(SqlOp::IsNotNull)` |
-| `between(col, lo, hi)` | `.column(col).op(SqlOp::Between).val(lo)` + val2 |
-| `in_select(col, sub)` | `.column(col).op(SqlOp::In).select(sub)` |
-| `not_in_select(col, sub)` | `.column(col).op(SqlOp::NotIn).select(sub)` |
-| `exists(sub)` | `.op(SqlOp::Exists).select(sub)` |
-| `not_exists(sub)` | `.op(SqlOp::NotExists).select(sub)` |
-| `count(col)` | `.column(col).col_fn(SqlFn::Count)` |
-| `sum(col)` | `.column(col).col_fn(SqlFn::Sum)` |
-| `avg(col)` | `.column(col).col_fn(SqlFn::Avg)` |
-| `min(col)` | `.column(col).col_fn(SqlFn::Min)` |
-| `max(col)` | `.column(col).col_fn(SqlFn::Max)` |
-| `lower(col)` | `.column(col).col_fn(SqlFn::Lower)` |
-| `upper(col)` | `.column(col).col_fn(SqlFn::Upper)` |
-| `json_get(col, key)` | `.column(col).op(SqlOp::JsonGet).val(key)` |
-| `json_get_text(col, key)` | `.column(col).op(SqlOp::JsonGetText).val(key)` |
-| `any(col, val)` | `.column(col).op(SqlOp::Any).val(val)` |
+| `Col::Name.eq(val)` | `SqlExpr::eq(Col::Name, val)` |
+| `Col::Name.neq(val)` | `SqlExpr::neq(Col::Name, val)` |
+| `Col::Age.gt(val)` | `SqlExpr::gt(Col::Age, val)` |
+| `Col::Age.gte(val)` | `SqlExpr::gte(Col::Age, val)` |
+| `Col::Age.lt(val)` | `SqlExpr::lt(Col::Age, val)` |
+| `Col::Age.lte(val)` | `SqlExpr::lte(Col::Age, val)` |
+| `Col::Name.like(val)` | `SqlExpr::like(Col::Name, val)` |
+| `Col::Name.ilike(val)` | `SqlExpr::ilike(Col::Name, val)` |
+| `Col::Id.in_(val)` | `SqlExpr::in_(Col::Id, val)` |
+| `Col::Id.not_in(val)` | `SqlExpr::not_in(Col::Id, val)` |
+| `Col::Email.is_null()` | `SqlExpr::is_null(Col::Email)` |
+| `Col::Email.is_not_null()` | `SqlExpr::is_not_null(Col::Email)` |
+| `Col::Age.between(lo, hi)` | `SqlExpr::between(Col::Age, lo, hi)` |
+| `Col::Id.in_select(sub)` | `SqlExpr::in_select(Col::Id, sub)` |
+| `Col::Id.not_in_select(sub)` | `SqlExpr::not_in_select(Col::Id, sub)` |
+| -- | `SqlExpr::exists(sub)` |
+| -- | `SqlExpr::not_exists(sub)` |
+| `Col::Id.count()` | `SqlExpr::count(Col::Id)` |
+| `Col::Age.sum()` | `SqlExpr::sum(Col::Age)` |
+| `Col::Age.avg()` | `SqlExpr::avg(Col::Age)` |
+| `Col::Age.min()` | `SqlExpr::min(Col::Age)` |
+| `Col::Age.max()` | `SqlExpr::max(Col::Age)` |
+| `Col::Name.lower()` | `SqlExpr::lower(Col::Name)` |
+| `Col::Name.upper()` | `SqlExpr::upper(Col::Name)` |
+| `Col::Data.json_get(key)` | `SqlExpr::json_get(Col::Data, key)` |
+| `Col::Data.json_get_text(key)` | `SqlExpr::json_get_text(Col::Data, key)` |
+| `Col::Name.any(val)` | `SqlExpr::any(Col::Name, val)` |
+| `Col::Name.into()` | `SqlExpr::column(Col::Name)` |
 
 ## Operators Reference
 
