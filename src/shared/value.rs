@@ -76,6 +76,11 @@ impl SqlParam {
     {
         SqlParam::Custom(Box::new(val))
     }
+
+    /// Serializes any `Serialize` value to `SqlParam::Json`.
+    pub fn json<T: serde::Serialize>(val: T) -> Self {
+        SqlParam::Json(serde_json::to_value(val).expect("json serialization failed"))
+    }
 }
 
 impl fmt::Debug for SqlParam {
