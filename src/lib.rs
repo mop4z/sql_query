@@ -18,7 +18,10 @@ pub use shared::{
     Id, SqlColId, SqlConflict, Table,
     error::SqlQueryError,
     expr::{SqlExpr, SqlFn, SqlJoin, SqlOp, SqlOrder},
-    unbinded_query::{BoundQuery, BoundQueryAs, BoundQueryScalar, UnbindedQuery},
+    unbinded_query::{
+        BoundQuery, BoundQueryAs, BoundQueryScalar, CachedBoundQueryAs, CachedBoundQueryScalar,
+        UnbindedQuery,
+    },
     value::SqlParam,
 };
 pub use sql_query_derive::{SqlCols, SqlParamEnum};

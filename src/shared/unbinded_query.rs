@@ -1,11 +1,12 @@
 use std::{fmt::Write, marker::PhantomData};
 
+use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{
     Executor, FromRow, Postgres, QueryBuilder,
     postgres::{PgPool, PgQueryResult, PgRow},
 };
 
-use crate::shared::{error::SqlQueryError, value::SqlParam};
+use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
 
 /// A query whose placeholders have not yet been renumbered or bound.
 pub struct UnbindedQuery<'q> {
@@ -32,6 +33,114 @@ pub struct BoundQueryScalar<T> {
     pub(crate) binds: Vec<SqlParam>,
     _t: PhantomData<T>,
 }
+
+/// A `BoundQueryAs<T>` with Redis caching enabled.
+pub struct CachedBoundQueryAs<T> {
+    sql: String,
+    binds: Vec<SqlParam>,
+    ttl: u64,
+    _t: PhantomData<T>,
+}
+
+/// A `BoundQueryScalar<T>` with Redis caching enabled.
+pub struct CachedBoundQueryScalar<T> {
+    sql: String,
+    binds: Vec<SqlParam>,
+    ttl: u64,
+    _t: PhantomData<T>,
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers — bind params and run query
+// ---------------------------------------------------------------------------
+
+async fn run_query_as<'e, T: for<'r> FromRow<'r, PgRow> + Send + Unpin>(
+    sql: &str,
+    binds: Vec<SqlParam>,
+    executor: impl Executor<'e, Database = Postgres>,
+) -> Result<Vec<T>, sqlx::Error> {
+    let mut q = sqlx::query_as::<_, T>(sql);
+    for b in binds {
+        q = q.bind(b);
+    }
+    q.fetch_all(executor).await
+}
+
+async fn run_query_as_one<'e, T: for<'r> FromRow<'r, PgRow> + Send + Unpin>(
+    sql: &str,
+    binds: Vec<SqlParam>,
+    executor: impl Executor<'e, Database = Postgres>,
+) -> Result<T, sqlx::Error> {
+    let mut q = sqlx::query_as::<_, T>(sql);
+    for b in binds {
+        q = q.bind(b);
+    }
+    q.fetch_one(executor).await
+}
+
+async fn run_query_as_optional<'e, T: for<'r> FromRow<'r, PgRow> + Send + Unpin>(
+    sql: &str,
+    binds: Vec<SqlParam>,
+    executor: impl Executor<'e, Database = Postgres>,
+) -> Result<Option<T>, sqlx::Error> {
+    let mut q = sqlx::query_as::<_, T>(sql);
+    for b in binds {
+        q = q.bind(b);
+    }
+    q.fetch_optional(executor).await
+}
+
+async fn run_scalar<'e, T>(
+    sql: &str,
+    binds: Vec<SqlParam>,
+    executor: impl Executor<'e, Database = Postgres>,
+) -> Result<Vec<T>, sqlx::Error>
+where
+    (T,): for<'r> FromRow<'r, PgRow>,
+    T: Send + Unpin,
+{
+    let mut q = sqlx::query_scalar::<_, T>(sql);
+    for b in binds {
+        q = q.bind(b);
+    }
+    q.fetch_all(executor).await
+}
+
+async fn run_scalar_one<'e, T>(
+    sql: &str,
+    binds: Vec<SqlParam>,
+    executor: impl Executor<'e, Database = Postgres>,
+) -> Result<T, sqlx::Error>
+where
+    (T,): for<'r> FromRow<'r, PgRow>,
+    T: Send + Unpin,
+{
+    let mut q = sqlx::query_scalar::<_, T>(sql);
+    for b in binds {
+        q = q.bind(b);
+    }
+    q.fetch_one(executor).await
+}
+
+async fn run_scalar_optional<'e, T>(
+    sql: &str,
+    binds: Vec<SqlParam>,
+    executor: impl Executor<'e, Database = Postgres>,
+) -> Result<Option<T>, sqlx::Error>
+where
+    (T,): for<'r> FromRow<'r, PgRow>,
+    T: Send + Unpin,
+{
+    let mut q = sqlx::query_scalar::<_, T>(sql);
+    for b in binds {
+        q = q.bind(b);
+    }
+    q.fetch_optional(executor).await
+}
+
+// ---------------------------------------------------------------------------
+// Placeholder renumbering
+// ---------------------------------------------------------------------------
 
 fn renumber_placeholders(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len() + 32);
@@ -68,33 +177,36 @@ pub(crate) fn push_conditions(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// UnbindedQuery
+// ---------------------------------------------------------------------------
+
 impl<'q> UnbindedQuery<'q> {
-    /// Consumes the query and returns the raw SQL string and bind values.
     pub fn into_raw(self) -> (String, Vec<SqlParam>) {
         (self.qb.into_sql(), self.binds)
     }
 
-    /// Renumbers placeholders and produces a `BoundQuery` for execution.
     pub fn bind(self) -> BoundQuery {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQuery { sql, binds: self.binds }
     }
 
-    /// Renumbers placeholders and produces a `BoundQueryAs<T>` for typed row fetching.
     pub fn bind_as<T>(self) -> BoundQueryAs<T> {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQueryAs { sql, binds: self.binds, _t: PhantomData }
     }
 
-    /// Renumbers placeholders and produces a `BoundQueryScalar<T>` for single-column fetching.
     pub fn bind_scalar<T>(self) -> BoundQueryScalar<T> {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQueryScalar { sql, binds: self.binds, _t: PhantomData }
     }
 }
 
+// ---------------------------------------------------------------------------
+// BoundQuery (no caching — raw rows aren't serializable)
+// ---------------------------------------------------------------------------
+
 impl BoundQuery {
-    /// Binds all parameters and executes the query, returning the raw result.
     pub async fn execute<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -106,7 +218,6 @@ impl BoundQuery {
         q.execute(executor).await
     }
 
-    /// Fetches all matching rows as raw `PgRow`s.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -118,7 +229,6 @@ impl BoundQuery {
         q.fetch_all(executor).await
     }
 
-    /// Fetches exactly one row as a raw `PgRow`.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -130,7 +240,6 @@ impl BoundQuery {
         q.fetch_one(executor).await
     }
 
-    /// Fetches at most one row as a raw `PgRow`, returning `None` if no rows match.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -143,44 +252,39 @@ impl BoundQuery {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BoundQueryAs<T>
+// ---------------------------------------------------------------------------
+
+impl<T> BoundQueryAs<T> {
+    /// Returns a `CachedBoundQueryAs` that checks Redis before hitting Postgres.
+    pub fn cached(self, ttl_secs: u64) -> CachedBoundQueryAs<T> {
+        CachedBoundQueryAs { sql: self.sql, binds: self.binds, ttl: ttl_secs, _t: PhantomData }
+    }
+}
+
 impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
-    /// Fetches all matching rows, deserializing each into `T`.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<Vec<T>, sqlx::Error> {
-        let mut q = sqlx::query_as::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        q.fetch_all(executor).await
+        run_query_as(&self.sql, self.binds, executor).await
     }
 
-    /// Fetches exactly one row, returning an error if zero or more than one row is found.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<T, sqlx::Error> {
-        let mut q = sqlx::query_as::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        q.fetch_one(executor).await
+        run_query_as_one(&self.sql, self.binds, executor).await
     }
 
-    /// Fetches at most one row, returning `None` if no rows match.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<Option<T>, sqlx::Error> {
-        let mut q = sqlx::query_as::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        q.fetch_optional(executor).await
+        run_query_as_optional(&self.sql, self.binds, executor).await
     }
 
-    /// Binds all parameters and executes the query, returning the raw result.
     pub async fn execute<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -192,7 +296,6 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         q.execute(executor).await
     }
 
-    /// Runs a COUNT(*) query and the SELECT query, returning (items, total_count).
     pub async fn fetch_paginated(self, pool: &PgPool) -> Result<(Vec<T>, i64), sqlx::Error> {
         let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _sq", self.sql);
         let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
@@ -200,14 +303,62 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
             count_q = count_q.bind(b.clone());
         }
         let total: i64 = count_q.fetch_one(&*pool).await?;
-
-        let mut q = sqlx::query_as::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        let items = q.fetch_all(&*pool).await?;
-
+        let items = run_query_as(&self.sql, self.binds, &*pool).await?;
         Ok((items, total))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CachedBoundQueryAs<T>
+// ---------------------------------------------------------------------------
+
+impl<T> CachedBoundQueryAs<T>
+where
+    T: for<'r> FromRow<'r, PgRow> + Send + Unpin + Serialize + DeserializeOwned,
+{
+    pub async fn fetch_all<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Vec<T>, sqlx::Error> {
+        let key = cached::cache_key(&self.sql, &self.binds);
+        let sql = self.sql;
+        let binds = self.binds;
+        cached::with_cache(&key, self.ttl, redis, || run_query_as(&sql, binds, executor)).await
+    }
+
+    pub async fn fetch_one<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<T, sqlx::Error> {
+        let key = cached::cache_key(&self.sql, &self.binds);
+        let sql = self.sql;
+        let binds = self.binds;
+        cached::with_cache(&key, self.ttl, redis, || run_query_as_one(&sql, binds, executor)).await
+    }
+
+    pub async fn fetch_optional<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Option<T>, sqlx::Error> {
+        let key = cached::cache_key(&self.sql, &self.binds);
+        let sql = self.sql;
+        let binds = self.binds;
+        cached::with_cache(&key, self.ttl, redis, || run_query_as_optional(&sql, binds, executor))
+            .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BoundQueryScalar<T>
+// ---------------------------------------------------------------------------
+
+impl<T> BoundQueryScalar<T> {
+    /// Returns a `CachedBoundQueryScalar` that checks Redis before hitting Postgres.
+    pub fn cached(self, ttl_secs: u64) -> CachedBoundQueryScalar<T> {
+        CachedBoundQueryScalar { sql: self.sql, binds: self.binds, ttl: ttl_secs, _t: PhantomData }
     }
 }
 
@@ -216,42 +367,75 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin,
 {
-    /// Fetches exactly one scalar value, returning an error if no rows match.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<T, sqlx::Error> {
-        let mut q = sqlx::query_scalar::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        q.fetch_one(executor).await
+        run_scalar_one(&self.sql, self.binds, executor).await
     }
 
-    /// Fetches at most one scalar value, returning `None` if no rows match.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<Option<T>, sqlx::Error> {
-        let mut q = sqlx::query_scalar::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        q.fetch_optional(executor).await
+        run_scalar_optional(&self.sql, self.binds, executor).await
     }
 
-    /// Fetches all matching scalar values.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<Vec<T>, sqlx::Error> {
-        let mut q = sqlx::query_scalar::<_, T>(&self.sql);
-        for b in self.binds {
-            q = q.bind(b);
-        }
-        q.fetch_all(executor).await
+        run_scalar(&self.sql, self.binds, executor).await
     }
 }
+
+// ---------------------------------------------------------------------------
+// CachedBoundQueryScalar<T>
+// ---------------------------------------------------------------------------
+
+impl<T> CachedBoundQueryScalar<T>
+where
+    (T,): for<'r> FromRow<'r, PgRow>,
+    T: Send + Unpin + Serialize + DeserializeOwned,
+{
+    pub async fn fetch_one<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<T, sqlx::Error> {
+        let key = cached::cache_key(&self.sql, &self.binds);
+        let sql = self.sql;
+        let binds = self.binds;
+        cached::with_cache(&key, self.ttl, redis, || run_scalar_one(&sql, binds, executor)).await
+    }
+
+    pub async fn fetch_optional<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Option<T>, sqlx::Error> {
+        let key = cached::cache_key(&self.sql, &self.binds);
+        let sql = self.sql;
+        let binds = self.binds;
+        cached::with_cache(&key, self.ttl, redis, || run_scalar_optional(&sql, binds, executor))
+            .await
+    }
+
+    pub async fn fetch_all<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Vec<T>, sqlx::Error> {
+        let key = cached::cache_key(&self.sql, &self.binds);
+        let sql = self.sql;
+        let binds = self.binds;
+        cached::with_cache(&key, self.ttl, redis, || run_scalar(&sql, binds, executor)).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

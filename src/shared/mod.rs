@@ -7,6 +7,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{Encode, FromRow, Postgres, Type, postgres::PgRow};
 use uuid::Uuid;
 
+pub(crate) mod cached;
 pub mod error;
 pub mod expr;
 pub mod unbinded_query;
