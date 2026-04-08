@@ -64,6 +64,21 @@ impl SqlUpdate {
         self.returning = Returning::All;
         self
     }
+
+    /// Explicitly opts out of a RETURNING clause (fire-and-forget update).
+    pub fn no_returning(mut self) -> Self {
+        self.returning = Returning::None;
+        self
+    }
+
+    /// Returns true if at least one SET clause with a non-null value has been added.
+    pub fn has_non_null_sets(&self) -> bool {
+        self.set_clauses.iter().any(|r| {
+            r.as_ref()
+                .map(|(_, binds)| binds.iter().any(|b| !matches!(b, SqlParam::Null)))
+                .unwrap_or(false)
+        })
+    }
 }
 
 impl SqlBase for SqlUpdate {

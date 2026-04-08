@@ -143,7 +143,7 @@ macro_rules! define_id {
         #[sqlx(transparent)]
         pub struct $name(pub ::uuid::Uuid);
 
-        impl $crate::shared::Id for $name {
+        impl $crate::Id for $name {
             #[inline]
             fn new() -> Self {
                 Self(::uuid::Uuid::now_v7())
@@ -194,9 +194,9 @@ macro_rules! define_id {
             }
         }
 
-        impl From<$name> for $crate::shared::value::SqlParam {
+        impl From<$name> for $crate::SqlParam {
             fn from(id: $name) -> Self {
-                $crate::shared::value::SqlParam::Uuid(id.0)
+                $crate::SqlParam::Uuid(id.0)
             }
         }
 
