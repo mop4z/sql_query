@@ -1,5 +1,6 @@
 use std::fmt;
 
+/// Errors produced when building a SQL query from invalid builder state.
 #[derive(Debug)]
 pub enum SqlQueryError {
     AndOrBothSet,

@@ -11,6 +11,7 @@ use crate::{
     },
 };
 
+/// Builder for SQL SELECT statements with optional joins, filters, grouping, and ordering.
 pub struct SqlSelect {
     table: &'static str,
     pub(super) columns: Vec<String>,
@@ -46,6 +47,7 @@ impl SqlSelect {
         }
     }
 
+    /// Sets the columns to select from the given table.
     pub fn from<T: Table>(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         for c in columns {
             self.columns.push(c.eval().unwrap().0);
@@ -53,6 +55,7 @@ impl SqlSelect {
         self
     }
 
+    /// Adds a JOIN clause between two tables on the given columns and operator.
     pub fn join<T1: Table, T2: Table>(
         mut self,
         sql_join: SqlJoin,
@@ -71,6 +74,7 @@ impl SqlSelect {
         self
     }
 
+    /// Adds GROUP BY columns to the query.
     pub fn group_by<T: Table>(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         for c in columns {
             self.group_by.push(c.eval().unwrap().0);
@@ -78,31 +82,37 @@ impl SqlSelect {
         self
     }
 
+    /// Appends an ORDER BY clause for the given column and direction.
     pub fn order_by<T: Table>(mut self, column: SqlExpr<T>, order: SqlOrder) -> Self {
         self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
         self
     }
 
+    /// Sets the maximum number of rows to return.
     pub fn limit(mut self, n: u32) -> Self {
         self.limit = Some(n);
         self
     }
 
+    /// Sets the number of rows to skip before returning results.
     pub fn offset(mut self, n: u32) -> Self {
         self.offset = Some(n);
         self
     }
 
+    /// Enables SELECT DISTINCT to eliminate duplicate rows.
     pub fn distinct(mut self) -> Self {
         self.distinct = true;
         self
     }
 
+    /// Adds WHERE conditions that are ANDed together.
     pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
+    /// Adds HAVING conditions applied after GROUP BY.
     pub fn having<T: Table>(mut self, conditions: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         self.having.extend(conditions.into_iter().map(|x| x.eval()));
         self

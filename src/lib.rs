@@ -1,3 +1,14 @@
+//! Type-safe dynamic SQL query builder for PostgreSQL, built on sqlx.
+//!
+//! All queries start from [`SqlQ`]:
+//! ```ignore
+//! let users = SqlQ::select::<Users>()
+//!     .filter([UExpr::eq(UsersCol::Name, "alice")])
+//!     .build()?
+//!     .build_as::<Users>()
+//!     .fetch_all(&pool).await?;
+//! ```
+
 extern crate self as sql_query;
 
 use crate::{
@@ -15,7 +26,7 @@ pub use shared::{
     unbinded_query::{BoundQuery, BoundQueryAs, BoundQueryScalar},
     value::SqlParam,
 };
-pub use sql_query_derive::SqlCols;
+pub use sql_query_derive::{SqlCols, SqlParamEnum};
 
 mod delete;
 mod insert;
@@ -23,6 +34,7 @@ mod select;
 mod shared;
 mod update;
 
+/// Internal trait implemented by all statement builders (SELECT, INSERT, UPDATE, DELETE).
 pub(crate) trait SqlBase {
     fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error>;
 }
@@ -49,6 +61,9 @@ impl SqlWith {
     }
 }
 
+/// Entry point for building SQL queries.
+///
+/// Provides factory methods for each statement type and CTE support.
 pub struct SqlQ;
 
 impl SqlQ {

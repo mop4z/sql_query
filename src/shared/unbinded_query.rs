@@ -7,22 +7,26 @@ use sqlx::{
 
 use crate::shared::{error::SqlQueryError, value::SqlParam};
 
+/// A query whose placeholders have not yet been renumbered or bound.
 pub struct UnbindedQuery<'q> {
     pub(crate) qb: QueryBuilder<'q, Postgres>,
     pub(crate) binds: Vec<SqlParam>,
 }
 
+/// A finalized query with renumbered placeholders, ready to execute without row mapping.
 pub struct BoundQuery {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
 }
 
+/// A finalized query that deserializes each row into `T` via `FromRow`.
 pub struct BoundQueryAs<T> {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
     _t: PhantomData<T>,
 }
 
+/// A finalized query that returns a single scalar column of type `T`.
 pub struct BoundQueryScalar<T> {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
@@ -65,20 +69,24 @@ pub(crate) fn push_conditions(
 }
 
 impl<'q> UnbindedQuery<'q> {
+    /// Consumes the query and returns the raw SQL string and bind values.
     pub fn into_raw(self) -> (String, Vec<SqlParam>) {
         (self.qb.into_sql(), self.binds)
     }
 
+    /// Renumbers placeholders and produces a `BoundQuery` for execution.
     pub fn build(self) -> BoundQuery {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQuery { sql, binds: self.binds }
     }
 
+    /// Renumbers placeholders and produces a `BoundQueryAs<T>` for typed row fetching.
     pub fn build_as<T>(self) -> BoundQueryAs<T> {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQueryAs { sql, binds: self.binds, _t: PhantomData }
     }
 
+    /// Renumbers placeholders and produces a `BoundQueryScalar<T>` for single-column fetching.
     pub fn build_scalar<T>(self) -> BoundQueryScalar<T> {
         let sql = renumber_placeholders(&self.qb.into_sql());
         BoundQueryScalar { sql, binds: self.binds, _t: PhantomData }
@@ -86,6 +94,7 @@ impl<'q> UnbindedQuery<'q> {
 }
 
 impl BoundQuery {
+    /// Binds all parameters and executes the query, returning the raw result.
     pub async fn execute(self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
@@ -96,6 +105,7 @@ impl BoundQuery {
 }
 
 impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
+    /// Fetches all matching rows, deserializing each into `T`.
     pub async fn fetch_all(self, pool: &PgPool) -> Result<Vec<T>, sqlx::Error> {
         let mut q = sqlx::query_as::<_, T>(&self.sql);
         for b in self.binds {
@@ -104,6 +114,7 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         q.fetch_all(pool).await
     }
 
+    /// Fetches exactly one row, returning an error if zero or more than one row is found.
     pub async fn fetch_one(self, pool: &PgPool) -> Result<T, sqlx::Error> {
         let mut q = sqlx::query_as::<_, T>(&self.sql);
         for b in self.binds {
@@ -112,6 +123,7 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         q.fetch_one(pool).await
     }
 
+    /// Fetches at most one row, returning `None` if no rows match.
     pub async fn fetch_optional(self, pool: &PgPool) -> Result<Option<T>, sqlx::Error> {
         let mut q = sqlx::query_as::<_, T>(&self.sql);
         for b in self.binds {
@@ -126,6 +138,7 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin,
 {
+    /// Fetches exactly one scalar value, returning an error if no rows match.
     pub async fn fetch_one(self, pool: &PgPool) -> Result<T, sqlx::Error> {
         let mut q = sqlx::query_scalar::<_, T>(&self.sql);
         for b in self.binds {
@@ -134,6 +147,7 @@ where
         q.fetch_one(pool).await
     }
 
+    /// Fetches at most one scalar value, returning `None` if no rows match.
     pub async fn fetch_optional(self, pool: &PgPool) -> Result<Option<T>, sqlx::Error> {
         let mut q = sqlx::query_scalar::<_, T>(&self.sql);
         for b in self.binds {

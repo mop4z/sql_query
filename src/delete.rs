@@ -10,6 +10,7 @@ use crate::{
     },
 };
 
+/// Builder for SQL DELETE statements with filters and optional RETURNING clause.
 pub struct SqlDelete<T: Table> {
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
@@ -33,22 +34,26 @@ impl<T: Table> SqlDelete<T> {
         }
     }
 
+    /// Allows deleting all rows without requiring any filter conditions.
     pub fn delete_all(mut self) -> Self {
         self.delete_all = true;
         self
     }
 
+    /// Adds WHERE conditions that are ANDed together.
     pub fn filter(mut self, filters: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
+    /// Adds a RETURNING clause for the specified columns.
     pub fn returning(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
     }
 
+    /// Adds a RETURNING * clause to return all columns of deleted rows.
     pub fn returning_all(mut self) -> Self {
         self.returning = Returning::All;
         self

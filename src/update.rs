@@ -8,6 +8,7 @@ use crate::{
     },
 };
 
+/// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.
 pub struct SqlUpdate {
     table: &'static str,
     set_clauses: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
@@ -33,27 +34,32 @@ impl SqlUpdate {
         }
     }
 
+    /// Adds SET clauses for the columns to update.
     pub fn set<T: Table>(mut self, exprs: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         self.set_clauses.extend(exprs.into_iter().map(|x| x.eval()));
         self
     }
 
+    /// Adds a FROM clause to reference another table in the update.
     pub fn from<T: Table>(mut self) -> Self {
         self.from_tables.push(format!("\"{}\"", T::TABLE_NAME));
         self
     }
 
+    /// Adds WHERE conditions that are ANDed together.
     pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
+    /// Adds a RETURNING clause for the specified columns.
     pub fn returning<T: Table>(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
     }
 
+    /// Adds a RETURNING * clause to return all columns of updated rows.
     pub fn returning_all(mut self) -> Self {
         self.returning = Returning::All;
         self

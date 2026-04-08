@@ -10,6 +10,7 @@ use crate::{
     },
 };
 
+/// Builder for SQL INSERT statements with conflict handling and optional RETURNING clause.
 pub struct SqlInsert<T: Table> {
     columns: Vec<String>,
     rows: Vec<Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>>,
@@ -35,6 +36,7 @@ impl<T: Table> SqlInsert<T> {
         }
     }
 
+    /// Sets column-value pairs for a single-row insert.
     pub fn values(
         mut self,
         exprs: impl IntoIterator<Item = SqlExpr<T>>,
@@ -48,6 +50,7 @@ impl<T: Table> SqlInsert<T> {
         Ok(self)
     }
 
+    /// Sets column-value pairs for a multi-row insert.
     pub fn values_nested(
         mut self,
         rows: impl IntoIterator<Item = impl IntoIterator<Item = SqlExpr<T>>>,
@@ -82,17 +85,20 @@ impl<T: Table> SqlInsert<T> {
         (cols, row)
     }
 
+    /// Sets the ON CONFLICT resolution strategy for the insert.
     pub fn on_conflict(mut self, conflict: SqlConflict<T::Col>) -> Self {
         self.on_conflict = Some(conflict);
         self
     }
 
+    /// Adds a RETURNING clause for the specified columns.
     pub fn returning(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
     }
 
+    /// Adds a RETURNING * clause to return all columns of inserted rows.
     pub fn returning_all(mut self) -> Self {
         self.returning = Returning::All;
         self

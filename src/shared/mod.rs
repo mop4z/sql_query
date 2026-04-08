@@ -17,12 +17,14 @@ pub(crate) use unbinded_query::push_conditions;
 
 use crate::shared::value::SqlParam;
 
+/// Conflict resolution strategy for INSERT ON CONFLICT clauses.
 pub enum SqlConflict<C: AsRef<str>> {
     DoNothing,
     DoUpdate { conflict_cols: Vec<C>, update_cols: Vec<C> },
     OnConstraint { name: &'static str, update_cols: Vec<C> },
 }
 
+/// Column enum variant that represents the primary-key / id column.
 pub trait SqlColId {
     fn id() -> Self;
 }
@@ -83,6 +85,7 @@ pub(crate) fn push_returning(
     }
 }
 
+/// Describes a Postgres table, its column enum, and its primary-key type.
 pub trait Table: for<'r> FromRow<'r, PgRow> + Send + Unpin + Debug + 'static {
     type Col: AsRef<str> + Display + Copy;
     type Id: Id + Into<SqlParam>;
