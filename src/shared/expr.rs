@@ -17,6 +17,9 @@ pub struct SqlExpr<T: Table> {
     select: Option<SqlSelect>,
     and: Option<Box<SqlExpr<T>>>,
     or: Option<Box<SqlExpr<T>>>,
+    then: Option<Box<SqlExpr<T>>>,
+    else_: Option<Box<SqlExpr<T>>>,
+    negate: bool,
 }
 
 impl<T: Table> SqlExpr<T> {
@@ -32,6 +35,9 @@ impl<T: Table> SqlExpr<T> {
             select: None,
             and: None,
             or: None,
+            then: None,
+            else_: None,
+            negate: false,
         }
     }
 
@@ -59,6 +65,16 @@ impl<T: Table> SqlExpr<T> {
 
     pub fn not_exists(select: SqlSelect) -> Self {
         Self::empty().op(SqlOp::NotExists).select(select)
+    }
+
+    pub fn then(mut self, expr: SqlExpr<T>) -> Self {
+        self.then = Some(Box::new(expr));
+        self
+    }
+
+    pub fn else_(mut self, expr: SqlExpr<T>) -> Self {
+        self.else_ = Some(Box::new(expr));
+        self
     }
 
     pub fn col(mut self, col: T::Col) -> Self {
@@ -106,6 +122,17 @@ impl<T: Table> SqlExpr<T> {
         self
     }
 
+    pub fn not(mut self) -> Self {
+        self.negate = true;
+        self
+    }
+
+    pub(crate) fn into_col_and_val(mut self) -> (Option<String>, Self) {
+        let col = self.col.take().map(|c| c.as_ref().to_string());
+        self.op = None;
+        (col, self)
+    }
+
     pub fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         if self.and.is_some() && self.or.is_some() {
             return Err(SqlQueryError::AndOrBothSet);
@@ -137,13 +164,13 @@ impl<T: Table> SqlExpr<T> {
                 if self.val.is_none() || self.val2.is_none() {
                     return Err(SqlQueryError::BetweenMissingBounds);
                 }
-                write!(out, " BETWEEN $1 AND $1").unwrap();
+                write!(out, " BETWEEN $# AND $#").unwrap();
                 binds.push(self.val.unwrap());
                 binds.push(self.val2.unwrap());
             }
             Some(SqlOp::Any | SqlOp::All) => {
                 write!(out, " {} ", self.op.as_ref().unwrap().as_ref()).unwrap();
-                write!(out, "($1)").unwrap();
+                write!(out, "($#)").unwrap();
                 if let Some(v) = self.val {
                     binds.push(v);
                 }
@@ -168,6 +195,24 @@ impl<T: Table> SqlExpr<T> {
             out.insert(0, '(');
             write!(out, " OR {right_sql})").unwrap();
             binds.extend(right_binds);
+        }
+
+        if self.negate {
+            out.insert_str(0, "NOT (");
+            out.push(')');
+        }
+
+        if self.then.is_some() != self.else_.is_some() {
+            return Err(SqlQueryError::CaseRequiresThenAndElse);
+        }
+
+        if let Some(then_expr) = self.then {
+            let (then_sql, then_binds) = then_expr.eval()?;
+            let (else_sql, else_binds) = self.else_.unwrap().eval()?;
+            let condition = out;
+            out = format!("CASE WHEN {condition} THEN {then_sql} ELSE {else_sql} END");
+            binds.extend(then_binds);
+            binds.extend(else_binds);
         }
 
         if let Some(alias) = &self.alias {
@@ -195,14 +240,14 @@ impl<T: Table> SqlExpr<T> {
             Some(f @ SqlFn::Now) => write!(out, "{}()", f.as_ref()),
             Some(f @ (SqlFn::True | SqlFn::False)) => write!(out, "{}", f.as_ref()),
             Some(f) => {
-                write!(out, "{}($1)", f.as_ref()).unwrap();
+                write!(out, "{}($#)", f.as_ref()).unwrap();
                 if let Some(v) = val {
                     binds.push(v);
                 }
                 return;
             }
             None => {
-                write!(out, "$1").unwrap();
+                write!(out, "$#").unwrap();
                 if let Some(v) = val {
                     binds.push(v);
                 }
@@ -235,6 +280,10 @@ pub enum SqlOp {
     NotExists,
     Any,
     All,
+    JsonGet,
+    JsonGetText,
+    JsonPath,
+    JsonPathText,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::AsRefStr)]
@@ -249,6 +298,10 @@ pub enum SqlFn {
     Lower,
     Upper,
     Coalesce,
+    Concat,
+    Substring,
+    Length,
+    Trim,
     True,
     False,
 }
@@ -277,6 +330,10 @@ impl AsRef<str> for SqlOp {
             Self::NotExists => "NOT EXISTS",
             Self::Any => "= ANY",
             Self::All => "= ALL",
+            Self::JsonGet => "->",
+            Self::JsonGetText => "->>",
+            Self::JsonPath => "#>",
+            Self::JsonPathText => "#>>",
         }
     }
 }
@@ -295,7 +352,12 @@ pub enum SqlOrder {
 #[derive(strum::AsRefStr)]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum SqlJoin {
+    Inner,
     Left,
+    Right,
+    #[strum(serialize = "FULL OUTER")]
+    FullOuter,
+    Cross,
 }
 
 #[cfg(test)]
@@ -372,25 +434,25 @@ mod tests {
     #[test]
     fn col_eq_val() {
         let e = Expr::empty().col(TC::Name).op(SqlOp::Eq).val(SqlParam::String("alice".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name = $#"#);
     }
 
     #[test]
     fn col_neq_val() {
         let e = Expr::empty().col(TC::Name).op(SqlOp::Neq).val(SqlParam::String("bob".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name != $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name != $#"#);
     }
 
     #[test]
     fn col_in_val() {
         let e = Expr::empty().col(TC::Id).op(SqlOp::In).val(SqlParam::I32(1));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".id IN $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".id IN $#"#);
     }
 
     #[test]
     fn col_not_in_val() {
         let e = Expr::empty().col(TC::Id).op(SqlOp::NotIn).val(SqlParam::I32(1));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".id NOT IN $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".id NOT IN $#"#);
     }
 
     // --- math operators ---
@@ -398,25 +460,25 @@ mod tests {
     #[test]
     fn col_add_val() {
         let e = Expr::empty().col(TC::Age).op(SqlOp::Add).val(SqlParam::I32(1));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age + $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".age + $#"#);
     }
 
     #[test]
     fn col_sub_val() {
         let e = Expr::empty().col(TC::Age).op(SqlOp::Sub).val(SqlParam::I32(5));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age - $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".age - $#"#);
     }
 
     #[test]
     fn col_mul_val() {
         let e = Expr::empty().col(TC::Age).op(SqlOp::Mul).val(SqlParam::I32(2));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age * $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".age * $#"#);
     }
 
     #[test]
     fn col_div_val() {
         let e = Expr::empty().col(TC::Age).op(SqlOp::Div).val(SqlParam::I32(3));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age / $1"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".age / $#"#);
     }
 
     // --- IS NULL / IS NOT NULL ---
@@ -449,7 +511,7 @@ mod tests {
             .op(SqlOp::Eq)
             .val(SqlParam::String("alice".into()))
             .val_fn(SqlFn::Lower);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = LOWER($1)"#);
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name = LOWER($#)"#);
     }
 
     #[test]
@@ -496,7 +558,7 @@ mod tests {
     #[test]
     fn col_fn_count_eq_val() {
         let e = Expr::empty().col(TC::Id).col_fn(SqlFn::Count).op(SqlOp::Eq).val(SqlParam::I32(10));
-        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".id) = $1"#);
+        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".id) = $#"#);
     }
 
     #[test]
@@ -507,7 +569,7 @@ mod tests {
             .op(SqlOp::Eq)
             .val(SqlParam::String("alice".into()))
             .val_fn(SqlFn::Lower);
-        assert_eq!(e.eval().unwrap().0, r#"LOWER("test_table".name) = LOWER($1)"#);
+        assert_eq!(e.eval().unwrap().0, r#"LOWER("test_table".name) = LOWER($#)"#);
     }
 
     // --- col_fn + op + val + alias ---
@@ -520,7 +582,7 @@ mod tests {
             .op(SqlOp::Eq)
             .val(SqlParam::I32(5))
             .alias("age_count");
-        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".age) = $1 AS age_count"#);
+        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".age) = $# AS age_count"#);
     }
 
     // --- eq helper ---
@@ -528,14 +590,14 @@ mod tests {
     #[test]
     fn eq_helper() {
         let (sql, binds) = Expr::eq(TC::Name, "alice").eval().unwrap();
-        assert_eq!(sql, r#""test_table".name = $1"#);
+        assert_eq!(sql, r#""test_table".name = $#"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
     #[test]
     fn eq_helper_with_i32() {
         let (sql, binds) = Expr::eq(TC::Age, 42i32).eval().unwrap();
-        assert_eq!(sql, r#""test_table".age = $1"#);
+        assert_eq!(sql, r#""test_table".age = $#"#);
         assert_eq!(binds, vec![SqlParam::I32(42)]);
     }
 
@@ -550,13 +612,13 @@ mod tests {
     #[test]
     fn val_only_no_col_no_op() {
         let e = Expr::empty().val(SqlParam::I32(42));
-        assert_eq!(e.eval().unwrap().0, "$1");
+        assert_eq!(e.eval().unwrap().0, "$#");
     }
 
     #[test]
     fn alias_on_val_only() {
         let e = Expr::empty().val(SqlParam::I32(1)).alias("constant");
-        assert_eq!(e.eval().unwrap().0, "$1 AS constant");
+        assert_eq!(e.eval().unwrap().0, "$# AS constant");
     }
 
     #[test]
@@ -599,5 +661,111 @@ mod tests {
     fn err_exists_missing_select() {
         let e = Expr::empty().op(SqlOp::Exists);
         assert!(matches!(e.eval(), Err(SqlQueryError::ExistsMissingSelect)));
+    }
+
+    #[test]
+    fn not_simple() {
+        let e = Expr::eq(TC::Name, "alice").not();
+        assert_eq!(e.eval().unwrap().0, r#"NOT ("test_table".name = $#)"#);
+    }
+
+    #[test]
+    fn not_with_or() {
+        let e = Expr::eq(TC::Name, "alice").or(Expr::eq(TC::Name, "bob")).not();
+        assert_eq!(
+            e.eval().unwrap().0,
+            r#"NOT (("test_table".name = $# OR "test_table".name = $#))"#,
+        );
+    }
+
+    #[test]
+    fn not_with_and() {
+        let e = Expr::eq(TC::Name, "alice").and(Expr::eq(TC::Age, 30i32)).not();
+        assert_eq!(
+            e.eval().unwrap().0,
+            r#"NOT (("test_table".name = $# AND "test_table".age = $#))"#,
+        );
+    }
+
+    #[test]
+    fn not_is_null() {
+        let e = Expr::is_null(TC::Name).not();
+        assert_eq!(e.eval().unwrap().0, r#"NOT ("test_table".name IS NULL)"#);
+    }
+
+    #[test]
+    fn not_with_alias() {
+        let e = Expr::eq(TC::Name, "alice").not().alias("excluded");
+        assert_eq!(e.eval().unwrap().0, r#"NOT ("test_table".name = $#) AS excluded"#);
+    }
+
+    #[test]
+    fn case_when_then_else() {
+        let (sql, binds) = Expr::eq(TC::Age, 18i32)
+            .then(Expr::empty().val(SqlParam::String("minor".into())))
+            .else_(Expr::empty().val(SqlParam::String("adult".into())))
+            .eval()
+            .unwrap();
+        assert_eq!(sql, r#"CASE WHEN "test_table".age = $# THEN $# ELSE $# END"#);
+        assert_eq!(
+            binds,
+            vec![
+                SqlParam::I32(18),
+                SqlParam::String("minor".into()),
+                SqlParam::String("adult".into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn case_when_then_else_with_alias() {
+        let (sql, _) = Expr::eq(TC::Age, 18i32)
+            .then(Expr::empty().val(SqlParam::String("minor".into())))
+            .else_(Expr::empty().val(SqlParam::String("adult".into())))
+            .alias("age_group")
+            .eval()
+            .unwrap();
+        assert_eq!(sql, r#"CASE WHEN "test_table".age = $# THEN $# ELSE $# END AS age_group"#);
+    }
+
+    #[test]
+    fn json_get() {
+        let e = Expr::empty().col(TC::Name).op(SqlOp::JsonGet).val(SqlParam::String("key".into()));
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name -> $#"#);
+    }
+
+    #[test]
+    fn json_get_text() {
+        let e =
+            Expr::empty().col(TC::Name).op(SqlOp::JsonGetText).val(SqlParam::String("key".into()));
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name ->> $#"#);
+    }
+
+    #[test]
+    fn json_path() {
+        let e =
+            Expr::empty().col(TC::Name).op(SqlOp::JsonPath).val(SqlParam::String("{a,b}".into()));
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name #> $#"#);
+    }
+
+    #[test]
+    fn json_path_text() {
+        let e = Expr::empty()
+            .col(TC::Name)
+            .op(SqlOp::JsonPathText)
+            .val(SqlParam::String("{a,b}".into()));
+        assert_eq!(e.eval().unwrap().0, r#""test_table".name #>> $#"#);
+    }
+
+    #[test]
+    fn err_then_without_else() {
+        let e = Expr::eq(TC::Age, 18i32).then(Expr::empty().val(SqlParam::String("minor".into())));
+        assert!(matches!(e.eval(), Err(SqlQueryError::CaseRequiresThenAndElse)));
+    }
+
+    #[test]
+    fn err_else_without_then() {
+        let e = Expr::eq(TC::Age, 18i32).else_(Expr::empty().val(SqlParam::String("adult".into())));
+        assert!(matches!(e.eval(), Err(SqlQueryError::CaseRequiresThenAndElse)));
     }
 }

@@ -31,22 +31,15 @@ pub struct BoundQueryScalar<T> {
 
 fn renumber_placeholders(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len() + 32);
-    let bytes = sql.as_bytes();
-    let mut i = 0;
     let mut idx = 1usize;
-    while i < bytes.len() {
-        if bytes[i] == b'$'
-            && bytes.get(i + 1) == Some(&b'1')
-            && !bytes.get(i + 2).is_some_and(|b| b.is_ascii_digit())
-        {
-            let _ = write!(out, "${idx}");
-            idx += 1;
-            i += 2;
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
-        }
+    let mut rest = sql;
+    while let Some(pos) = rest.find("$#") {
+        out.push_str(&rest[..pos]);
+        let _ = write!(out, "${idx}");
+        idx += 1;
+        rest = &rest[pos + 2..];
     }
+    out.push_str(rest);
     out
 }
 
@@ -157,7 +150,7 @@ mod tests {
     #[test]
     fn renumber_single() {
         assert_eq!(
-            renumber_placeholders("SELECT * FROM t WHERE x = $1"),
+            renumber_placeholders("SELECT * FROM t WHERE x = $#"),
             "SELECT * FROM t WHERE x = $1",
         );
     }
@@ -165,7 +158,7 @@ mod tests {
     #[test]
     fn renumber_multiple() {
         assert_eq!(
-            renumber_placeholders("SELECT * FROM t WHERE a = $1 AND b = $1 AND c = $1"),
+            renumber_placeholders("SELECT * FROM t WHERE a = $# AND b = $# AND c = $#"),
             "SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3",
         );
     }
@@ -177,18 +170,18 @@ mod tests {
 
     #[test]
     fn renumber_adjacent_to_text() {
-        assert_eq!(renumber_placeholders("$1,$1"), "$1,$2");
+        assert_eq!(renumber_placeholders("$#,$#"), "$1,$2");
     }
 
     #[test]
-    fn renumber_ignores_other_indices() {
-        assert_eq!(renumber_placeholders("$10 $12 $1 $1"), "$10 $12 $1 $2");
+    fn renumber_does_not_match_dollar_one() {
+        assert_eq!(renumber_placeholders("'costs $1' $#"), "'costs $1' $1");
     }
 
     #[test]
     fn renumber_in_limit_offset() {
         assert_eq!(
-            renumber_placeholders("WHERE a = $1 LIMIT $1 OFFSET $1"),
+            renumber_placeholders("WHERE a = $# LIMIT $# OFFSET $#"),
             "WHERE a = $1 LIMIT $2 OFFSET $3",
         );
     }

@@ -9,13 +9,79 @@ use uuid::Uuid;
 
 pub mod error;
 pub mod expr;
-mod unbinded_query;
+pub mod unbinded_query;
 pub mod value;
 
 pub use unbinded_query::UnbindedQuery;
 pub(crate) use unbinded_query::push_conditions;
 
 use crate::shared::value::SqlParam;
+
+pub enum SqlConflict<C: AsRef<str>> {
+    DoNothing,
+    DoUpdate { conflict_cols: Vec<C>, update_cols: Vec<C> },
+    OnConstraint { name: &'static str, update_cols: Vec<C> },
+}
+
+pub trait SqlColId {
+    fn id() -> Self;
+}
+
+pub(crate) struct Cte {
+    pub name: String,
+    pub sql: String,
+    pub binds: Vec<SqlParam>,
+}
+
+pub(crate) fn prepend_ctes(ctes: Vec<Cte>, sql: &mut String, binds: &mut Vec<SqlParam>) {
+    if ctes.is_empty() {
+        return;
+    }
+    let mut prefix = String::from("WITH ");
+    let mut cte_binds = vec![];
+    for (i, cte) in ctes.into_iter().enumerate() {
+        if i > 0 {
+            prefix.push_str(", ");
+        }
+        prefix.push_str(&cte.name);
+        prefix.push_str(" AS (");
+        prefix.push_str(&cte.sql);
+        prefix.push(')');
+        cte_binds.extend(cte.binds);
+    }
+    prefix.push(' ');
+    prefix.push_str(sql);
+    *sql = prefix;
+    cte_binds.extend(binds.drain(..));
+    *binds = cte_binds;
+}
+
+pub(crate) enum Returning {
+    None,
+    All,
+    Columns(Vec<String>),
+}
+
+pub(crate) fn push_returning(
+    returning: Returning,
+    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
+) {
+    match returning {
+        Returning::None => {}
+        Returning::All => {
+            qb.push(" RETURNING *");
+        }
+        Returning::Columns(cols) => {
+            qb.push(" RETURNING ");
+            for (i, col) in cols.iter().enumerate() {
+                if i > 0 {
+                    qb.push(", ");
+                }
+                qb.push(col);
+            }
+        }
+    }
+}
 
 pub trait Table: for<'r> FromRow<'r, PgRow> + Send + Unpin + Debug + 'static {
     type Col: AsRef<str> + Display + Copy;

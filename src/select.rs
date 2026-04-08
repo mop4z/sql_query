@@ -3,10 +3,10 @@ use sqlx::QueryBuilder;
 use crate::{
     SqlBase,
     shared::{
-        Table, UnbindedQuery,
+        Cte, Table, UnbindedQuery,
         error::SqlQueryError,
         expr::{SqlExpr, SqlJoin, SqlOp, SqlOrder},
-        push_conditions,
+        prepend_ctes, push_conditions,
         value::SqlParam,
     },
 };
@@ -19,13 +19,18 @@ pub struct SqlSelect {
     having: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     group_by: Vec<String>,
     order_by: Vec<String>,
-    limit: Option<i64>,
-    offset: Option<i64>,
+    limit: Option<u32>,
+    offset: Option<u32>,
     distinct: bool,
+    ctes: Vec<Cte>,
 }
 
 impl SqlSelect {
     pub(super) fn new<T: Table>() -> Self {
+        Self::new_with::<T>(vec![])
+    }
+
+    pub(super) fn new_with<T: Table>(ctes: Vec<Cte>) -> Self {
         Self {
             table: T::TABLE_NAME,
             columns: Vec::new(),
@@ -37,6 +42,7 @@ impl SqlSelect {
             limit: None,
             offset: None,
             distinct: false,
+            ctes,
         }
     }
 
@@ -77,12 +83,12 @@ impl SqlSelect {
         self
     }
 
-    pub fn limit(mut self, n: i64) -> Self {
+    pub fn limit(mut self, n: u32) -> Self {
         self.limit = Some(n);
         self
     }
 
-    pub fn offset(mut self, n: i64) -> Self {
+    pub fn offset(mut self, n: u32) -> Self {
         self.offset = Some(n);
         self
     }
@@ -115,8 +121,10 @@ impl SqlBase for SqlSelect {
             sql.push_str(join);
         }
 
-        let mut qb = QueryBuilder::new(sql);
         let mut binds = vec![];
+        prepend_ctes(self.ctes, &mut sql, &mut binds);
+
+        let mut qb = QueryBuilder::new(sql);
         push_conditions("WHERE", self.filters, &mut qb, &mut binds)?;
 
         if !self.group_by.is_empty() {
@@ -132,12 +140,12 @@ impl SqlBase for SqlSelect {
         }
 
         if let Some(limit) = self.limit {
-            qb.push(" LIMIT $1");
-            binds.push(limit.into());
+            qb.push(" LIMIT $#");
+            binds.push(SqlParam::I64(limit as i64));
         }
         if let Some(offset) = self.offset {
-            qb.push(" OFFSET $1");
-            binds.push(offset.into());
+            qb.push(" OFFSET $#");
+            binds.push(SqlParam::I64(offset as i64));
         }
 
         Ok(UnbindedQuery { qb, binds })
@@ -333,6 +341,48 @@ mod tests {
         assert_eq!(
             sql,
             r#"SELECT * FROM "users" LEFT JOIN "posts" ON "posts".user_id = "users".id"#,
+        );
+    }
+
+    #[test]
+    fn select_with_inner_join() {
+        let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
+            SqlJoin::Inner,
+            PExpr::column(PostsCol::UserId),
+            SqlOp::Eq,
+            UExpr::column(UsersCol::Id),
+        ));
+        assert_eq!(
+            sql,
+            r#"SELECT * FROM "users" INNER JOIN "posts" ON "posts".user_id = "users".id"#,
+        );
+    }
+
+    #[test]
+    fn select_with_right_join() {
+        let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
+            SqlJoin::Right,
+            PExpr::column(PostsCol::UserId),
+            SqlOp::Eq,
+            UExpr::column(UsersCol::Id),
+        ));
+        assert_eq!(
+            sql,
+            r#"SELECT * FROM "users" RIGHT JOIN "posts" ON "posts".user_id = "users".id"#,
+        );
+    }
+
+    #[test]
+    fn select_with_full_outer_join() {
+        let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
+            SqlJoin::FullOuter,
+            PExpr::column(PostsCol::UserId),
+            SqlOp::Eq,
+            UExpr::column(UsersCol::Id),
+        ));
+        assert_eq!(
+            sql,
+            r#"SELECT * FROM "users" FULL OUTER JOIN "posts" ON "posts".user_id = "users".id"#,
         );
     }
 
@@ -744,5 +794,54 @@ mod tests {
                 SqlParam::I32(30),
             ],
         );
+    }
+
+    #[test]
+    fn select_with_single_cte() {
+        let (sql, binds) = build(
+            crate::SqlQ::with([(
+                "active_users",
+                SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Age, 18i32)]),
+            )])
+            .select::<Users>(),
+        );
+        assert_eq!(
+            sql,
+            r#"WITH active_users AS (SELECT * FROM "users" WHERE 1=1 AND "users".age = $1) SELECT * FROM "users""#,
+        );
+        assert_eq!(binds, vec![SqlParam::I32(18)]);
+    }
+
+    #[test]
+    fn select_with_multiple_ctes() {
+        let (sql, binds) = build(
+            crate::SqlQ::with([
+                ("young", SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Age, 18i32)])),
+                ("old", SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Age, 65i32)])),
+            ])
+            .select::<Users>(),
+        );
+        assert_eq!(
+            sql,
+            r#"WITH young AS (SELECT * FROM "users" WHERE 1=1 AND "users".age = $1), old AS (SELECT * FROM "users" WHERE 1=1 AND "users".age = $2) SELECT * FROM "users""#,
+        );
+        assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I32(65)]);
+    }
+
+    #[test]
+    fn select_with_cte_and_filters() {
+        let (sql, binds) = build(
+            crate::SqlQ::with([(
+                "active",
+                SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Name, "alice")]),
+            )])
+            .select::<Users>()
+            .filter([UExpr::eq(UsersCol::Age, 30i32)]),
+        );
+        assert_eq!(
+            sql,
+            r#"WITH active AS (SELECT * FROM "users" WHERE 1=1 AND "users".name = $1) SELECT * FROM "users" WHERE 1=1 AND "users".age = $2"#,
+        );
+        assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
     }
 }

@@ -21,7 +21,14 @@ pub enum SqlParam {
     Json(Value),
     DateTimeUtc(DateTime<Utc>),
     Uuid(Uuid),
-    // Array(Vec<SqlParam>),
+    StringArray(Vec<String>),
+    I32Array(Vec<i32>),
+    I64Array(Vec<i64>),
+    F64Array(Vec<f64>),
+    BoolArray(Vec<bool>),
+    DecimalArray(Vec<Decimal>),
+    DateTimeUtcArray(Vec<DateTime<Utc>>),
+    UuidArray(Vec<Uuid>),
     Null,
 }
 
@@ -62,7 +69,14 @@ impl_sql_param_from! {
     Value => Json,
     DateTime<Utc> => DateTimeUtc,
     Uuid => Uuid,
-    // Vec<SqlParam> => Array,
+    Vec<String> => StringArray,
+    Vec<i32> => I32Array,
+    Vec<i64> => I64Array,
+    Vec<f64> => F64Array,
+    Vec<bool> => BoolArray,
+    Vec<Decimal> => DecimalArray,
+    Vec<DateTime<Utc>> => DateTimeUtcArray,
+    Vec<Uuid> => UuidArray,
 }
 
 impl From<&str> for SqlParam {
@@ -73,7 +87,9 @@ impl From<&str> for SqlParam {
 
 impl From<NaiveDate> for SqlParam {
     fn from(value: NaiveDate) -> Self {
-        SqlParam::DateTimeUtc(value.and_hms_opt(0, 0, 0).unwrap().and_utc())
+        SqlParam::DateTimeUtc(
+            value.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc(),
+        )
     }
 }
 
@@ -112,7 +128,10 @@ impl<'q> Encode<'q, Postgres> for SqlParam {
         encode_dispatch!(self, buf, encode_by_ref;
             String(String), I16(i16), I32(i32), I64(i64), F64(f64), Bool(bool),
             Decimal(Decimal), Json(Value), DateTimeUtc(DateTime<Utc>),
-            Uuid(Uuid), // Array(Vec<SqlParam>),
+            Uuid(Uuid),
+            StringArray(Vec<String>), I32Array(Vec<i32>), I64Array(Vec<i64>),
+            F64Array(Vec<f64>), BoolArray(Vec<bool>), DecimalArray(Vec<Decimal>),
+            DateTimeUtcArray(Vec<DateTime<Utc>>), UuidArray(Vec<Uuid>),
         )
     }
 
@@ -120,7 +139,10 @@ impl<'q> Encode<'q, Postgres> for SqlParam {
         Some(type_info_dispatch!(self;
             String(String), I16(i16), I32(i32), I64(i64), F64(f64), Bool(bool),
             Decimal(Decimal), Json(Value), DateTimeUtc(DateTime<Utc>),
-            Uuid(Uuid), // Array(Vec<SqlParam>),
+            Uuid(Uuid),
+            StringArray(Vec<String>), I32Array(Vec<i32>), I64Array(Vec<i64>),
+            F64Array(Vec<f64>), BoolArray(Vec<bool>), DecimalArray(Vec<Decimal>),
+            DateTimeUtcArray(Vec<DateTime<Utc>>), UuidArray(Vec<Uuid>),
         ))
     }
 }

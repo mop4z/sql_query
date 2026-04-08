@@ -6,6 +6,8 @@ pub enum SqlQueryError {
     BetweenMissingBounds,
     ExistsMissingSelect,
     InsertValuesAlreadySet,
+    DeleteRequiresFilterOrDeleteAll,
+    CaseRequiresThenAndElse,
 }
 
 impl fmt::Display for SqlQueryError {
@@ -16,6 +18,12 @@ impl fmt::Display for SqlQueryError {
             Self::ExistsMissingSelect => write!(f, "EXISTS/NOT EXISTS requires .select()"),
             Self::InsertValuesAlreadySet => {
                 write!(f, "values already set, use values() or values_nested() but not both")
+            }
+            Self::DeleteRequiresFilterOrDeleteAll => {
+                write!(f, "DELETE requires .filter() or .delete_all()")
+            }
+            Self::CaseRequiresThenAndElse => {
+                write!(f, "CASE requires both .then() and .else_()")
             }
         }
     }
