@@ -7,9 +7,25 @@ use sqlx::{
     Database, Encode, Postgres, Type,
     encode::IsNull,
     error::BoxDynError,
-    postgres::{PgArgumentBuffer, PgTypeInfo},
+    postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo},
 };
 use uuid::Uuid;
+
+/// Marker trait for custom Postgres enums derived with `SqlParamEnum`.
+///
+/// Enables a blanket `From<Vec<T>> for SqlParam` without conflicting
+/// with the concrete `From<Vec<String>>`, `From<Vec<i32>>`, etc. impls.
+pub trait SqlEnum:
+    for<'q> Encode<'q, Postgres>
+    + Type<Postgres>
+    + PgHasArrayType
+    + Clone
+    + Send
+    + Sync
+    + fmt::Debug
+    + 'static
+{
+}
 
 pub trait SqlParamCustom: Send + Sync {
     fn encode_param(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError>;
@@ -228,6 +244,12 @@ where
             Some(v) => v.into(),
             None => SqlParam::Null,
         }
+    }
+}
+
+impl<T: SqlEnum> From<Vec<T>> for SqlParam {
+    fn from(value: Vec<T>) -> Self {
+        SqlParam::custom(value)
     }
 }
 

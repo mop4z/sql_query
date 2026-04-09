@@ -22,7 +22,7 @@ pub use shared::{
         BoundQuery, BoundQueryAs, BoundQueryScalar, CachedBoundQueryAs, CachedBoundQueryScalar,
         UnbindedQuery,
     },
-    value::SqlParam,
+    value::{SqlEnum, SqlParam},
 };
 pub use sql_query_derive::{SqlCols, SqlParamEnum};
 
