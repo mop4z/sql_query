@@ -85,7 +85,7 @@ pub(crate) fn push_returning(returning: Returning, sql: &mut String) {
 
 /// Describes a Postgres table, its column enum, and its primary-key type.
 pub trait Table: for<'r> FromRow<'r, PgRow> + Send + Unpin + Debug + 'static {
-    type Col: AsRef<str> + Display + Copy;
+    type Col: AsRef<str> + Display + Copy + expr::ColOps<Self>;
     type Id: Id + Into<SqlParam>;
     const TABLE_NAME: &'static str;
     const PRIMARY_KEY: &'static str;

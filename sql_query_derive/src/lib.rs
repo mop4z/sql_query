@@ -78,114 +78,115 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::sql_query::ColOps<#struct_name> for #enum_name {}
+
         impl #enum_name {
-            pub fn is_null(self) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).is_null()
-            }
-
-            pub fn is_not_null(self) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).is_not_null()
-            }
-
             pub fn eq(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).eq().val(val)
+                ::sql_query::ColOps::eq(self, val)
             }
 
             pub fn neq(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).neq().val(val)
+                ::sql_query::ColOps::neq(self, val)
             }
 
             pub fn gt(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).gt().val(val)
+                ::sql_query::ColOps::gt(self, val)
             }
 
             pub fn gte(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).gte().val(val)
+                ::sql_query::ColOps::gte(self, val)
             }
 
             pub fn lt(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).lt().val(val)
+                ::sql_query::ColOps::lt(self, val)
             }
 
             pub fn lte(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).lte().val(val)
+                ::sql_query::ColOps::lte(self, val)
             }
 
             pub fn like(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).like(val)
+                ::sql_query::ColOps::like(self, val)
             }
 
             pub fn ilike(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).ilike(val)
+                ::sql_query::ColOps::ilike(self, val)
             }
 
             pub fn in_(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).in_(val)
+                ::sql_query::ColOps::in_(self, val)
             }
 
             pub fn not_in(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).not_in(val)
+                ::sql_query::ColOps::not_in(self, val)
             }
 
             pub fn between(self, lo: impl Into<::sql_query::SqlParam>, hi: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).between(lo, hi)
+                ::sql_query::ColOps::between(self, lo, hi)
             }
 
             pub fn in_select(self, select: ::sql_query::SqlSelect) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).in_select(select)
+                ::sql_query::ColOps::in_select(self, select)
             }
 
             pub fn not_in_select(self, select: ::sql_query::SqlSelect) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).not_in_select(select)
+                ::sql_query::ColOps::not_in_select(self, select)
+            }
+
+            pub fn is_null(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::is_null(self)
+            }
+
+            pub fn is_not_null(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::is_not_null(self)
             }
 
             pub fn count(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).count()
+                ::sql_query::ColOps::count(self)
             }
 
             pub fn sum(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).sum()
+                ::sql_query::ColOps::sum(self)
             }
 
             pub fn avg(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).avg()
+                ::sql_query::ColOps::avg(self)
             }
 
             pub fn min(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).min()
+                ::sql_query::ColOps::min(self)
             }
 
             pub fn max(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).max()
+                ::sql_query::ColOps::max(self)
             }
 
             pub fn lower(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).lower()
+                ::sql_query::ColOps::lower(self)
             }
 
             pub fn upper(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).upper()
+                ::sql_query::ColOps::upper(self)
             }
 
             pub fn json_get(self, key: impl Into<::sql_query::SqlParam>) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).json_get(key)
+                ::sql_query::ColOps::json_get(self, key)
             }
 
             pub fn json_get_text(self, key: impl Into<::sql_query::SqlParam>) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self).json_get_text(key)
+                ::sql_query::ColOps::json_get_text(self, key)
             }
 
             pub fn any(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).any(val)
+                ::sql_query::ColOps::any(self, val)
             }
 
             pub fn jsonb_text_eq(self, key: impl Into<::sql_query::SqlParam>, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
-                ::sql_query::Expr::new().column(self).jsonb_text_eq(key, val)
+                ::sql_query::ColOps::jsonb_text_eq(self, key, val)
             }
 
-            /// Returns an `ExprCol` for further chaining (e.g. `.eq()`, `.add()`, `.alias()`).
             pub fn col(self) -> ::sql_query::ExprCol<#struct_name> {
-                ::sql_query::Expr::new().column(self)
+                ::sql_query::ColOps::col(self)
             }
         }
     };

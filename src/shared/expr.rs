@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use smallvec::SmallVec;
@@ -627,6 +628,124 @@ impl<T: Table> ExprCol<T> {
 impl<T: Table> EvalExpr for ExprCol<T> {
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         self.0.eval()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ColOps<T> — shorthand methods for column enums
+// ---------------------------------------------------------------------------
+
+/// Shorthand methods available on every column enum derived with `SqlCols`.
+///
+/// All methods have default implementations that delegate to the expression
+/// builder, so the derive macro only needs to generate an empty impl.
+pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
+    fn eq(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).eq().val(val)
+    }
+
+    fn neq(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).neq().val(val)
+    }
+
+    fn gt(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).gt().val(val)
+    }
+
+    fn gte(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).gte().val(val)
+    }
+
+    fn lt(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).lt().val(val)
+    }
+
+    fn lte(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).lte().val(val)
+    }
+
+    fn like(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).like(val)
+    }
+
+    fn ilike(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).ilike(val)
+    }
+
+    fn in_(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).in_(val)
+    }
+
+    fn not_in(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).not_in(val)
+    }
+
+    fn between(self, lo: impl Into<SqlParam>, hi: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).between(lo, hi)
+    }
+
+    fn in_select(self, select: SqlSelect) -> Expr<T> {
+        Expr::new().column(self).in_select(select)
+    }
+
+    fn not_in_select(self, select: SqlSelect) -> Expr<T> {
+        Expr::new().column(self).not_in_select(select)
+    }
+
+    fn is_null(self) -> Expr<T> {
+        Expr::new().column(self).is_null()
+    }
+
+    fn is_not_null(self) -> Expr<T> {
+        Expr::new().column(self).is_not_null()
+    }
+
+    fn count(self) -> ExprCol<T> {
+        Expr::new().column(self).count()
+    }
+
+    fn sum(self) -> ExprCol<T> {
+        Expr::new().column(self).sum()
+    }
+
+    fn avg(self) -> ExprCol<T> {
+        Expr::new().column(self).avg()
+    }
+
+    fn min(self) -> ExprCol<T> {
+        Expr::new().column(self).min()
+    }
+
+    fn max(self) -> ExprCol<T> {
+        Expr::new().column(self).max()
+    }
+
+    fn lower(self) -> ExprCol<T> {
+        Expr::new().column(self).lower()
+    }
+
+    fn upper(self) -> ExprCol<T> {
+        Expr::new().column(self).upper()
+    }
+
+    fn json_get(self, key: impl Into<SqlParam>) -> ExprCol<T> {
+        Expr::new().column(self).json_get(key)
+    }
+
+    fn json_get_text(self, key: impl Into<SqlParam>) -> ExprCol<T> {
+        Expr::new().column(self).json_get_text(key)
+    }
+
+    fn any(self, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).any(val)
+    }
+
+    fn jsonb_text_eq(self, key: impl Into<SqlParam>, val: impl Into<SqlParam>) -> Expr<T> {
+        Expr::new().column(self).jsonb_text_eq(key, val)
+    }
+
+    fn col(self) -> ExprCol<T> {
+        Expr::new().column(self)
     }
 }
 

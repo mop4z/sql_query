@@ -38,7 +38,7 @@ impl Table for Users {
 }
 ```
 
-`#[derive(SqlCols)]` generates a `UsersCol` enum with variants `Id`, `Name`, `Age`, `Email` that serialize to their snake_case database column names.
+`#[derive(SqlCols)]` generates a `UsersCol` enum with variants `Id`, `Name`, `Age`, `Email` that serialize to their snake_case database column names. It also implements the `ColOps<Users>` trait, which provides all shorthand methods (`.eq()`, `.col()`, `.count()`, etc.).
 
 ## Expression System
 
@@ -89,6 +89,14 @@ E::new().column(UC::UpdatedAt).eq().now()
 // EXISTS (subquery)
 E::new().exists(sub)
 // -> EXISTS (SELECT ...)
+
+// Cross-table column reference (no raw SQL needed)
+E::new().column(NC::Logo).eq().column_of::<Currency>(CC::Logo)
+// -> "network".logo = "currency".logo
+
+// Compose expressions with .expr()
+E::new().column(UC::RateDate).gte().expr(E::new().raw("CURRENT_DATE").sub().val(days))
+// -> "users".rate_date >= CURRENT_DATE - $1
 
 // Raw SQL escape hatch
 E::new().column(UC::Name).eq().raw("UPPER('test')")
@@ -296,6 +304,13 @@ SqlQ::update::<Users>()
     .set([
         Expr::<Users>::new().column(UC::Balance).eq()
             .column(UC::Balance).add().val(amount),
+    ])
+
+// Cross-table column reference: SET col = other_table.col
+SqlQ::update::<Network>()
+    .set([
+        NetworkCol::Logo.col().eq().column_of::<Currency>(CurrencyCol::Logo),
+        NetworkCol::UpdatedAt.col().eq().now(),
     ])
 ```
 
@@ -591,6 +606,9 @@ pub enum CurrencyType {
 
 // Use directly in expressions -- the Postgres enum OID is preserved
 CurrencyCol::CurrencyType.eq(CurrencyType::Fiat)
+
+// Vec<Enum> works with IN / ANY -- automatically converts to a Postgres array
+ParseStatusCol::Status.in_(vec![ParseStatus::New, ParseStatus::Empty, ParseStatus::Error])
 ```
 
 ## Expression Helpers Reference
@@ -683,15 +701,17 @@ Methods on `Expr<T>` (base/terminal state):
 
 Methods available after an operator (`.eq()`, `.add()`, etc.):
 
-| Method         | Effect                          |
-| -------------- | ------------------------------- |
-| `.column(col)` | Append column ref -> ExprCol    |
-| `.val(v)`      | Append bound param -> Expr      |
-| `.now()`       | Append `NOW()` -> Expr          |
-| `.null()`      | Append `NULL` -> Expr           |
-| `.raw(s)`      | Append raw SQL -> Expr          |
-| `.select(sub)` | Append `(subquery)` -> Expr     |
-| `.if_(cond)`   | Start `CASE WHEN ...` -> ExprIf |
+| Method              | Effect                                    |
+| ------------------- | ----------------------------------------- |
+| `.column(col)`      | Append column ref -> ExprCol              |
+| `.column_of::<U>()` | Append column ref from another table `U`  |
+| `.val(v)`           | Append bound param -> Expr                |
+| `.now()`            | Append `NOW()` -> Expr                    |
+| `.null()`           | Append `NULL` -> Expr                     |
+| `.raw(s)`           | Append raw SQL -> Expr                    |
+| `.expr(e)`          | Splice another expression's SQL and binds |
+| `.select(sub)`      | Append `(subquery)` -> Expr               |
+| `.if_(cond)`        | Start `CASE WHEN ...` -> ExprIf           |
 
 ## Error Handling
 
@@ -729,3 +749,4 @@ Methods available after an operator (`.eq()`, `.add()`, etc.):
 | `Option<T>`                    | `T` variant or `Null`                          |
 | `NaiveDate`                    | `DateTimeUtc` (midnight)                       |
 | `#[derive(SqlParamEnum)]` enum | `Custom` (type-erased, preserves Postgres OID) |
+| `Vec<#[derive(SqlParamEnum)]>` | `Custom` (Postgres enum array)                 |
