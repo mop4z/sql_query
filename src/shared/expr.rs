@@ -140,6 +140,43 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Append a SQL function call: `name(prefix val)`.
+    ///
+    /// ```ignore
+    /// // make_interval(hours => $1)
+    /// E::new().func("make_interval", "hours => ", ttl_hours)
+    /// ```
+    pub fn func(mut self, name: &str, prefix: &str, v: impl Into<SqlParam>) -> Self {
+        self.0.buf.push_str(name);
+        self.0.buf.push('(');
+        self.0.buf.push_str(prefix);
+        self.0.push_val(v);
+        self.0.buf.push(')');
+        self
+    }
+
+    /// Wrap as `GREATEST(self, other)`.
+    pub fn max(self, other: impl Into<Expr<T>>) -> Self {
+        Expr::greatest(self, other)
+    }
+
+    /// Wrap as `LEAST(self, other)`.
+    pub fn min(self, other: impl Into<Expr<T>>) -> Self {
+        Expr::least(self, other)
+    }
+
+    /// Append ` + `.
+    pub fn add(mut self) -> Self {
+        self.0.push(" + ");
+        self
+    }
+
+    /// Append ` - `.
+    pub fn sub(mut self) -> Self {
+        self.0.push(" - ");
+        self
+    }
+
     /// Wrap the current expression in `(…)`, append ` AND `, and continue.
     pub fn and(mut self) -> Self {
         self.0.buf.insert(0, '(');
@@ -627,6 +664,30 @@ impl<T: Table> ExprOp<T> {
     /// Append raw SQL verbatim.
     pub fn raw(mut self, s: &str) -> Expr<T> {
         self.0.push(s);
+        Expr(self.0)
+    }
+
+    /// Splice another expression's SQL and binds into this position.
+    pub fn expr(mut self, e: impl Into<Expr<T>>) -> Expr<T> {
+        let e: Expr<T> = e.into();
+        let (sql, binds) = e.0.eval().unwrap();
+        self.0.buf.push_str(&sql);
+        self.0.binds.extend(binds);
+        Expr(self.0)
+    }
+
+    /// Append a SQL function call: `name(prefix val)`.
+    ///
+    /// ```ignore
+    /// // make_interval(hours => $1)
+    /// E::new().func("make_interval", "hours => ", ttl_hours)
+    /// ```
+    pub fn func(mut self, name: &str, prefix: &str, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.buf.push_str(name);
+        self.0.buf.push('(');
+        self.0.buf.push_str(prefix);
+        self.0.push_val(v);
+        self.0.buf.push(')');
         Expr(self.0)
     }
 
@@ -1275,5 +1336,39 @@ mod tests {
         let (sql, binds) = eval(e);
         assert_eq!(sql, "$#");
         assert_eq!(binds, vec![SqlParam::I32(42)]);
+    }
+
+    // -- expr() on ExprOp ------------------------------------------------------
+
+    #[test]
+    fn expr_op_expr_splices_inner() {
+        let (sql, binds) = eval(E::new().column(TC::Name).eq().expr(E::greatest(
+            TC::Name,
+            E::new().now().add().func("make_interval", "hours => ", 24i32),
+        )));
+        assert_eq!(
+            sql,
+            r#""test_table".name = GREATEST("test_table".name, NOW() + make_interval(hours => $#))"#,
+        );
+        assert_eq!(binds, vec![SqlParam::I32(24)]);
+    }
+
+    // -- func() on Expr --------------------------------------------------------
+
+    #[test]
+    fn func_on_expr() {
+        let (sql, binds) = eval(E::new().func("make_interval", "hours => ", 24i32));
+        assert_eq!(sql, "make_interval(hours => $#)");
+        assert_eq!(binds, vec![SqlParam::I32(24)]);
+    }
+
+    // -- func() on ExprOp ------------------------------------------------------
+
+    #[test]
+    fn func_on_expr_op() {
+        let (sql, binds) =
+            eval(E::new().column(TC::Age).eq().func("make_interval", "hours => ", 5i32));
+        assert_eq!(sql, r#""test_table".age = make_interval(hours => $#)"#);
+        assert_eq!(binds, vec![SqlParam::I32(5)]);
     }
 }
