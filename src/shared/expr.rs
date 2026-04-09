@@ -1,6 +1,5 @@
 use std::{fmt::Write, marker::PhantomData};
 
-use compact_str::CompactString;
 use smallvec::SmallVec;
 
 use crate::{
@@ -26,14 +25,14 @@ pub trait EvalExpr {
 // ---------------------------------------------------------------------------
 
 struct ExprBuf<T: Table> {
-    buf: CompactString,
+    buf: String,
     binds: SmallVec<[SqlParam; 2]>,
     _t: PhantomData<T>,
 }
 
 impl<T: Table> ExprBuf<T> {
     fn new() -> Self {
-        Self { buf: CompactString::default(), binds: SmallVec::new(), _t: PhantomData }
+        Self { buf: String::with_capacity(64), binds: SmallVec::new(), _t: PhantomData }
     }
 
     fn push(&mut self, s: &str) {
@@ -41,7 +40,10 @@ impl<T: Table> ExprBuf<T> {
     }
 
     fn push_col(&mut self, col: T::Col) {
-        write!(self.buf, "\"{}\".{}", T::TABLE_NAME, col.as_ref()).unwrap();
+        self.buf.push('"');
+        self.buf.push_str(T::TABLE_NAME);
+        self.buf.push_str("\".");
+        self.buf.push_str(col.as_ref());
     }
 
     fn push_val(&mut self, v: impl Into<SqlParam>) {
@@ -50,7 +52,7 @@ impl<T: Table> ExprBuf<T> {
     }
 
     fn wrap_fn(&mut self, name: &str) {
-        let mut new_buf = CompactString::with_capacity(name.len() + 1 + self.buf.len() + 1);
+        let mut new_buf = String::with_capacity(name.len() + 1 + self.buf.len() + 1);
         new_buf.push_str(name);
         new_buf.push('(');
         new_buf.push_str(&self.buf);
@@ -59,7 +61,7 @@ impl<T: Table> ExprBuf<T> {
     }
 
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
-        Ok((self.buf.into(), self.binds.into_vec()))
+        Ok((self.buf, self.binds.into_vec()))
     }
 }
 
@@ -261,7 +263,7 @@ impl<T: Table> Expr<T> {
                 return (Some(col_name), val_sql, binds.into_vec());
             }
         }
-        (None, sql.into(), binds.into_vec())
+        (None, sql, binds.into_vec())
     }
 }
 
