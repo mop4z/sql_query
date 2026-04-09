@@ -5,7 +5,7 @@ use sqlx::QueryBuilder;
 use crate::{
     SqlBase,
     shared::{
-        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::SqlExpr, prepend_ctes,
+        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::Expr, prepend_ctes,
         push_conditions, push_returning, value::SqlParam,
     },
 };
@@ -41,13 +41,13 @@ impl<T: Table> SqlDelete<T> {
     }
 
     /// Adds WHERE conditions that are ANDed together.
-    pub fn filter(mut self, filters: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
@@ -89,7 +89,6 @@ impl<T: Table> SqlBase for SqlDelete<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::expr::SqlOp;
     use crate::{SqlCols, define_id};
     use sqlx::FromRow;
 
@@ -109,7 +108,7 @@ mod tests {
         const PRIMARY_KEY: &'static str = "id";
     }
 
-    type UExpr = SqlExpr<Users>;
+    type UExpr = Expr<Users>;
 
     fn build(delete: SqlDelete<Users>) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(delete).unwrap();
@@ -132,18 +131,16 @@ mod tests {
 
     #[test]
     fn delete_with_filter() {
-        let (sql, binds) =
-            build(SqlDelete::<Users>::new().filter([UExpr::eq(UsersCol::Name, "alice")]));
+        let (sql, binds) = build(SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice")]));
         assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND "users".name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
     #[test]
     fn delete_with_multiple_filters() {
-        let (sql, binds) = build(SqlDelete::<Users>::new().filter([
-            UExpr::eq(UsersCol::Name, "alice"),
-            UExpr::column(UsersCol::Age).op(SqlOp::Gt).val(SqlParam::I32(18)),
-        ]));
+        let (sql, binds) = build(
+            SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice"), UsersCol::Age.gt(18i32)]),
+        );
         assert_eq!(
             sql,
             r#"DELETE FROM "users" WHERE 1=1 AND "users".name = $1 AND "users".age > $2"#,
@@ -153,29 +150,31 @@ mod tests {
 
     #[test]
     fn delete_with_returning() {
-        let (sql, _) = build(
-            SqlDelete::<Users>::new().filter([UExpr::eq(UsersCol::Name, "alice")]).returning_all(),
-        );
+        let (sql, _) =
+            build(SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice")]).returning_all());
         assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND "users".name = $1 RETURNING *"#,);
     }
 
     #[test]
     fn delete_with_or_filter() {
         let (sql, binds) = build(
-            SqlDelete::<Users>::new()
-                .filter([UExpr::eq(UsersCol::Name, "alice").or(UExpr::eq(UsersCol::Name, "bob"))]),
+            SqlDelete::<Users>::new().filter([UsersCol::Name
+                .eq("alice")
+                .or()
+                .column(UsersCol::Name)
+                .eq()
+                .val("bob")]),
         );
         assert_eq!(
             sql,
-            r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1 OR "users".name = $2)"#,
+            r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1) OR "users".name = $2"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],);
     }
 
     #[test]
     fn delete_with_is_null() {
-        let (sql, binds) =
-            build(SqlDelete::<Users>::new().filter([UExpr::is_null(UsersCol::Name)]));
+        let (sql, binds) = build(SqlDelete::<Users>::new().filter([UsersCol::Name.is_null()]));
         assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND "users".name IS NULL"#);
         assert!(binds.is_empty());
     }
@@ -183,12 +182,11 @@ mod tests {
     #[test]
     fn delete_with_subquery() {
         let sub = crate::select::SqlSelect::new::<Users>()
-            .from([UExpr::column(UsersCol::Id)])
-            .filter([UExpr::eq(UsersCol::Name, "alice")]);
+            .from([UExpr::new().column(UsersCol::Id).into()])
+            .filter([UsersCol::Name.eq("alice")]);
 
         let (sql, binds) = build(
-            SqlDelete::<Users>::new()
-                .filter([UExpr::column(UsersCol::Id).op(SqlOp::In).select(sub)]),
+            SqlDelete::<Users>::new().filter([UExpr::new().column(UsersCol::Id).in_select(sub)]),
         );
         assert_eq!(
             sql,

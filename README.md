@@ -5,8 +5,9 @@ A type-safe, dynamic SQL query builder for PostgreSQL built on top of [sqlx](htt
 ## Features
 
 - **Type-safe columns** via derive macro `SqlCols` -- column names are enum variants, not strings
+- **Typestate expression builder** -- compile-time enforcement of valid expression chains
 - **Full CRUD** -- SELECT, INSERT, UPDATE, DELETE builders
-- **Composable expressions** -- AND/OR grouping, NOT, subqueries, CASE/WHEN
+- **Composable expressions** -- AND/OR grouping, NOT, subqueries, CASE/WHEN, self-referential arithmetic
 - **CTE support** -- `WITH` clauses for complex queries
 - **Parameterized queries** -- all values are bound parameters, never interpolated
 - **Async execution** -- `fetch_all`, `fetch_one`, `fetch_optional`, `execute` via sqlx
@@ -16,7 +17,7 @@ A type-safe, dynamic SQL query builder for PostgreSQL built on top of [sqlx](htt
 Define your table struct and derive the necessary traits:
 
 ```rust
-use sql_query::{SqlQ, SqlExpr, SqlCols, Table, Id, define_id};
+use sql_query::{SqlQ, Expr, SqlCols, Table, Id, define_id};
 use sqlx::FromRow;
 
 define_id!(UserId);
@@ -39,6 +40,71 @@ impl Table for Users {
 
 `#[derive(SqlCols)]` generates a `UsersCol` enum with variants `Id`, `Name`, `Age`, `Email` that serialize to their snake_case database column names.
 
+## Expression System
+
+Expressions use a **typestate pattern** -- each method returns a different struct type, so only valid chains compile:
+
+```
+Expr  --column()--> ExprCol  --eq()/add()/...--> ExprOp  --val()/column()/...--> Expr
+                    ExprCol  --is_null()--------> Expr
+                    ExprCol  --count()/sum()/..-> ExprCol (wraps in function)
+```
+
+**`Expr<T>`** is the base/terminal state. You start here and end here.
+**`ExprCol<T>`** is reached after `.column()` -- operators and function wraps are available.
+**`ExprOp<T>`** is reached after an operator like `.eq()` -- values, columns, and subqueries are available.
+
+### Col Shorthand Methods
+
+The most common patterns have shorthand methods on the generated `Col` enum:
+
+```rust
+use UsersCol as UC;
+
+UC::Name.eq("alice")         // "users".name = $1
+UC::Age.gt(18i32)            // "users".age > $1
+UC::Email.is_null()          // "users".email IS NULL
+UC::Age.between(18i32, 65)   // "users".age BETWEEN $1 AND $2
+UC::Id.count().alias("total") // COUNT("users".id) AS total
+```
+
+These return `Expr<T>` (or `ExprCol<T>` for aggregate wraps), ready to pass directly to `.filter()`, `.set()`, etc.
+
+### Full Expression Chaining
+
+For anything beyond the shorthand, chain methods on `Expr::new()`:
+
+```rust
+use sql_query::Expr;
+type E = Expr<Users>;
+
+// Self-referential arithmetic: col = col + val
+E::new().column(UC::Age).eq().column(UC::Age).add().val(1i32)
+// -> "users".age = "users".age + $1
+
+// Column = NOW()
+E::new().column(UC::UpdatedAt).eq().now()
+// -> "users".updated_at = NOW()
+
+// EXISTS (subquery)
+E::new().exists(sub)
+// -> EXISTS (SELECT ...)
+
+// Raw SQL escape hatch
+E::new().column(UC::Name).eq().raw("UPPER('test')")
+// -> "users".name = UPPER('test')
+```
+
+### Col `.col()` Method
+
+When you need `ExprCol` directly (e.g. for JOINs or further chaining):
+
+```rust
+UC::Name.col()           // ExprCol<Users> -- can chain .eq(), .add(), .alias(), etc.
+UC::Name.col().cast("text")  // "users".name::text
+UC::Name.col().lower().alias("lname")  // LOWER("users".name) AS lname
+```
+
 ## Query Building
 
 All queries start from `SqlQ` and follow the builder pattern:
@@ -50,23 +116,23 @@ SqlQ::select/insert/update/delete() -> builder -> .build() -> BoundQuery -> .exe
 ### SELECT
 
 ```rust
-use sql_query::{SqlQ, SqlExpr, SqlOp, SqlFn, SqlOrder, SqlParam};
+use sql_query::{SqlQ, Expr, SqlOrder, SqlParam};
 use UsersCol as UC;
 
 // SELECT * FROM "users"
-let query = SqlQ::select::<Users>().build()?.build_as::<Users>();
+let query = SqlQ::select::<Users>().build()?.bind_as::<Users>();
 
 // SELECT "users".name, "users".age FROM "users"
 let query = SqlQ::select::<Users>()
     .from([UC::Name.into(), UC::Age.into()])
     .build()?
-    .build_as::<Users>();
+    .bind_as::<Users>();
 
 // SELECT * FROM "users" WHERE "users".name = $1 AND "users".age > $2
 let query = SqlQ::select::<Users>()
     .filter([UC::Name.eq("alice"), UC::Age.gt(18i32)])
     .build()?
-    .build_as::<Users>();
+    .bind_as::<Users>();
 
 // SELECT DISTINCT "users".name FROM "users"
 // WHERE 1=1 AND "users".age >= $1
@@ -80,7 +146,7 @@ let query = SqlQ::select::<Users>()
     .limit(10)
     .offset(20)
     .build()?
-    .build_as::<Users>();
+    .bind_as::<Users>();
 
 // Execute
 let users: Vec<Users> = query.fetch_all(&pool).await?;
@@ -97,7 +163,7 @@ SqlQ::select::<Users>()
     ])
 ```
 
-Available functions: `Count`, `Sum`, `Avg`, `Min`, `Max`, `Lower`, `Upper`, `Length`, `Trim`, `Concat`, `Substring`, `Coalesce`, `Now`.
+Available wraps on `ExprCol`: `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.lower()`, `.upper()`, `.length()`, `.trim()`, `.concat()`, `.substring()`, `.coalesce(fallback)`, `.cast("type")`, `.wrap_raw("FN_NAME")`.
 
 #### GROUP BY & HAVING
 
@@ -112,7 +178,7 @@ SqlQ::select::<Users>()
     ])
     .group_by([UC::Age.into()])
     .having([
-        UC::Id.count().op(SqlOp::Eq).val(5i32),
+        UC::Id.count().eq().val(5i32).into(),
     ])
 ```
 
@@ -127,13 +193,14 @@ use PostsCol as PC;
 SqlQ::select::<Users>()
     .join::<Posts, Users>(
         SqlJoin::Inner,
-        PC::UserId.into(),
-        SqlOp::Eq,
-        UC::Id.into(),
+        PC::UserId.col(),
+        UC::Id.col(),
     )
 ```
 
 Join types: `Inner`, `Left`, `Right`, `FullOuter`, `Cross`.
+
+The `join` method takes two `ExprCol`s from different table types and generates `JOIN "T1" ON t1_col = t2_col`.
 
 #### Subqueries
 
@@ -155,7 +222,7 @@ SqlQ::select::<Users>()
 SqlQ::insert::<Users>()
     .values([UC::Name.eq("alice"), UC::Age.eq(30i32)])?
     .build()?
-    .build()
+    .bind()
     .execute(&pool).await?;
 
 // Multi-row insert
@@ -221,7 +288,14 @@ SqlQ::update::<Users>()
 // UPDATE with NOW()
 SqlQ::update::<Users>()
     .set([
-        SqlExpr::<Users>::column(UC::Name).op(SqlOp::Eq).val_fn(SqlFn::Now),
+        Expr::<Users>::new().column(UC::UpdatedAt).eq().now(),
+    ])
+
+// Self-referential arithmetic: col = col + val
+SqlQ::update::<Users>()
+    .set([
+        Expr::<Users>::new().column(UC::Balance).eq()
+            .column(UC::Balance).add().val(amount),
     ])
 ```
 
@@ -262,49 +336,99 @@ Calling `.build()` without `.filter()` or `.delete_all()` returns an error to pr
 
 ## Expression Composition
 
-### AND / OR Grouping
+### AND / OR
+
+`.and()` and `.or()` wrap the preceding expression in parentheses before appending the logical operator. Use `.and_bare()` / `.or_bare()` to skip the wrapping.
 
 ```rust
-// WHERE 1=1 AND ("users".name = $1 OR "users".name = $2)
-.filter([
-    UC::Name.eq("alice").or(UC::Name.eq("bob")),
-])
-
-// WHERE 1=1 AND ("users".name = $1 AND "users".age > $2)
-.filter([
-    UC::Name.eq("alice").and(UC::Age.gt(18i32)),
-])
-
-// Nested: WHERE 1=1 AND ("users".name = $1 OR ("users".name = $2 AND "users".age > $3))
+// WHERE 1=1 AND ("users".name = $1) OR "users".name = $2
 .filter([
     UC::Name.eq("alice")
-        .or(UC::Name.eq("bob").and(UC::Age.gt(30i32))),
+        .or()
+        .column(UC::Name).eq().val("bob"),
 ])
+
+// Bare (no parens): "users".name = $1 AND "users".age > $2
+UC::Name.eq("alice")
+    .and_bare()
+    .column(UC::Age).gt().val(18i32)
+
+// Explicit grouping with .paren()
+UC::Name.eq("a")
+    .or_bare()
+    .column(UC::Name).eq().val("b")
+    .paren()  // wraps everything in (...)
 ```
 
 ### NOT
 
 ```rust
-// WHERE 1=1 AND NOT ("users".name = $1)
-.filter([UC::Name.eq("alice").not()])
-
-// NOT with OR: AND NOT (("users".name = $1 OR "users".name = $2))
-.filter([
-    UC::Name.eq("alice").or(UC::Name.eq("bob")).not(),
-])
+// NOT "users".email IS NULL
+UC::Email.is_null().not()
 ```
 
 ### CASE / WHEN / THEN / ELSE
 
+Uses a typestate chain: `.if_()` -> `ExprIf` (must call `.then_()`) -> `ExprThen` (must call `.else_()`) -> back to `Expr`.
+
 ```rust
-// CASE WHEN "users".age = $1 THEN $2 ELSE $3 END AS age_group
-UC::Age.eq(18i32)
-    .then(SqlExpr::<Users>::empty().val(SqlParam::String("minor".into())))
-    .else_(SqlExpr::<Users>::empty().val(SqlParam::String("adult".into())))
-    .alias("age_group")
+type E = Expr<Users>;
+
+// "users".age_group = CASE WHEN $1 THEN $2 ELSE NULL END
+E::new().column(UC::AgeGroup).eq()
+    .if_(E::new().val(SqlParam::Bool(true)))
+    .then_(E::new().val(SqlParam::String("minor".into())))
+    .else_(E::new().null())
+
+// With column refs and GREATEST in THEN branch
+E::new().column(UC::ClosedAt).eq()
+    .if_(E::new().val(is_closed))
+    .then_(Expr::greatest(
+        E::new().val(close_ts),
+        E::new().column(UC::AcquiredAt).into(),
+    ))
+    .else_(E::new().null())
 ```
 
-Both `.then()` and `.else_()` are required -- using one without the other returns `CaseRequiresThenAndElse`.
+### GREATEST / LEAST
+
+Static constructors on `Expr` that take two expressions:
+
+```rust
+// GREATEST($1, "users".created_at)
+Expr::greatest(
+    E::new().val(some_timestamp),
+    E::new().column(UC::CreatedAt).into(),
+)
+
+// LEAST($1, $2)
+Expr::least(
+    E::new().val(10i32),
+    E::new().val(20i32),
+)
+```
+
+### Type Casts
+
+```rust
+// "users".age::text
+UC::Age.col().cast("text")
+
+// Also on Expr:
+E::new().val(SqlParam::I32(1)).cast("text")  // $1::text
+```
+
+### Wrap Raw (Escape Hatch)
+
+For SQL functions not covered by built-in methods, `.wrap_raw("FN")` wraps the buffer as `FN(buf)`:
+
+```rust
+// UNACCENT("users".name)
+UC::Name.col().wrap_raw("UNACCENT")
+
+// MY_FUNC($1)
+E::new().val(SqlParam::I32(1)).wrap_raw("MY_FUNC")
+```
 
 ### BETWEEN
 
@@ -318,10 +442,10 @@ Both `.then()` and `.else_()` are required -- using one without the other return
 ```rust
 // WHERE 1=1 AND EXISTS (SELECT * FROM "posts" WHERE ...)
 let sub = SqlQ::select::<Posts>().filter([PC::Active.eq(true)]);
-.filter([SqlExpr::<Users>::exists(sub)])
+.filter([Expr::<Users>::new().exists(sub)])
 
 // NOT EXISTS
-.filter([SqlExpr::<Users>::not_exists(sub)])
+.filter([Expr::<Users>::new().not_exists(sub)])
 ```
 
 ### LIKE / ILIKE
@@ -355,15 +479,52 @@ let sub = SqlQ::select::<Posts>().filter([PC::Active.eq(true)]);
 ### JSON Operators
 
 ```rust
-// "users".data -> 'key'
+// "users".data -> 'key'      (returns JSON)
 UC::Data.json_get("key")
 
-// "users".data ->> 'key'
+// "users".data ->> 'key'     (returns text)
 UC::Data.json_get_text("key")
 
-// Verbose form for #> and #>>
-SqlExpr::<Users>::column(UC::Data).op(SqlOp::JsonPath).val("{a,b}")
-SqlExpr::<Users>::column(UC::Data).op(SqlOp::JsonPathText).val("{a,b}")
+// "users".data ->> 'key' = 'val'  (JSONB text equality)
+UC::Data.jsonb_text_eq("key", "val")
+
+// "users".data #> '{a,b}'    (JSON path)
+UC::Data.col().json_path("{a,b}")
+
+// "users".data #>> '{a,b}'   (JSON path as text)
+UC::Data.col().json_path_text("{a,b}")
+```
+
+### Self-Referential Arithmetic
+
+A key feature of the expression builder -- update a column based on its own current value:
+
+```rust
+type E = Expr<TradeLot>;
+use TradeLotCol as TL;
+
+// UPDATE trade_lot SET
+//   remaining_qty = $1,
+//   realised_pnl = realised_pnl + $2,
+//   closed_at = CASE WHEN $3 THEN GREATEST($4, acquired_at) ELSE NULL END,
+//   updated_at = NOW()
+// WHERE id = $5
+SqlQ::update::<TradeLot>()
+    .set([
+        TL::RemainingQty.eq(qty),
+        E::new().column(TL::RealisedPnl).eq()
+            .column(TL::RealisedPnl).add().val(pnl_delta),
+        E::new().column(TL::ClosedAt).eq()
+            .if_(E::new().val(is_closed))
+            .then_(Expr::greatest(
+                E::new().val(close_ts),
+                E::new().column(TL::AcquiredAt).into(),
+            ))
+            .else_(E::new().null()),
+        E::new().column(TL::UpdatedAt).eq().now(),
+    ])
+    .filter([TL::Id.eq(lot_id)])
+    .build()?;
 ```
 
 ## CTEs (Common Table Expressions)
@@ -398,20 +559,20 @@ Every query builder produces an `UnbindedQuery` via `.build()`, which is then fi
 let users: Vec<Users> = SqlQ::select::<Users>()
     .filter([...])
     .build()?
-    .build_as::<Users>()
+    .bind_as::<Users>()
     .fetch_all(&pool).await?;
 
 // For single row
-let user: Users = query.build()?.build_as::<Users>().fetch_one(&pool).await?;
+let user: Users = query.build()?.bind_as::<Users>().fetch_one(&pool).await?;
 
 // For optional row
-let user: Option<Users> = query.build()?.build_as::<Users>().fetch_optional(&pool).await?;
+let user: Option<Users> = query.build()?.bind_as::<Users>().fetch_optional(&pool).await?;
 
 // For scalar values (e.g., COUNT)
-let count: i64 = query.build()?.build_scalar::<i64>().fetch_one(&pool).await?;
+let count: i64 = query.build()?.bind_scalar::<i64>().fetch_one(&pool).await?;
 
 // For INSERT/UPDATE/DELETE (rows affected)
-let result = query.build()?.build().execute(&pool).await?;
+let result = query.build()?.bind().execute(&pool).await?;
 ```
 
 ## Custom Postgres Enums
@@ -434,126 +595,137 @@ CurrencyCol::CurrencyType.eq(CurrencyType::Fiat)
 
 ## Expression Helpers Reference
 
-Helpers are available both as methods on `Col` enums and as associated functions on `SqlExpr<T>`. The Col method style is preferred:
+### Col Shorthand Methods
 
-| Col method | SqlExpr equivalent |
-|--------|-----------|
-| `Col::Name.eq(val)` | `SqlExpr::eq(Col::Name, val)` |
-| `Col::Name.neq(val)` | `SqlExpr::neq(Col::Name, val)` |
-| `Col::Age.gt(val)` | `SqlExpr::gt(Col::Age, val)` |
-| `Col::Age.gte(val)` | `SqlExpr::gte(Col::Age, val)` |
-| `Col::Age.lt(val)` | `SqlExpr::lt(Col::Age, val)` |
-| `Col::Age.lte(val)` | `SqlExpr::lte(Col::Age, val)` |
-| `Col::Name.like(val)` | `SqlExpr::like(Col::Name, val)` |
-| `Col::Name.ilike(val)` | `SqlExpr::ilike(Col::Name, val)` |
-| `Col::Id.in_(val)` | `SqlExpr::in_(Col::Id, val)` |
-| `Col::Id.not_in(val)` | `SqlExpr::not_in(Col::Id, val)` |
-| `Col::Email.is_null()` | `SqlExpr::is_null(Col::Email)` |
-| `Col::Email.is_not_null()` | `SqlExpr::is_not_null(Col::Email)` |
-| `Col::Age.between(lo, hi)` | `SqlExpr::between(Col::Age, lo, hi)` |
-| `Col::Id.in_select(sub)` | `SqlExpr::in_select(Col::Id, sub)` |
-| `Col::Id.not_in_select(sub)` | `SqlExpr::not_in_select(Col::Id, sub)` |
-| -- | `SqlExpr::exists(sub)` |
-| -- | `SqlExpr::not_exists(sub)` |
-| `Col::Id.count()` | `SqlExpr::count(Col::Id)` |
-| `Col::Age.sum()` | `SqlExpr::sum(Col::Age)` |
-| `Col::Age.avg()` | `SqlExpr::avg(Col::Age)` |
-| `Col::Age.min()` | `SqlExpr::min(Col::Age)` |
-| `Col::Age.max()` | `SqlExpr::max(Col::Age)` |
-| `Col::Name.lower()` | `SqlExpr::lower(Col::Name)` |
-| `Col::Name.upper()` | `SqlExpr::upper(Col::Name)` |
-| `Col::Data.json_get(key)` | `SqlExpr::json_get(Col::Data, key)` |
-| `Col::Data.json_get_text(key)` | `SqlExpr::json_get_text(Col::Data, key)` |
-| `Col::Name.any(val)` | `SqlExpr::any(Col::Name, val)` |
-| `Col::Name.into()` | `SqlExpr::column(Col::Name)` |
+Methods on the generated `Col` enum that return `Expr<T>` (ready for `.filter()`, `.set()`, etc.):
 
-## Operators Reference
+| Col method                      | SQL Output                   |
+| ------------------------------- | ---------------------------- |
+| `Col::Name.eq(val)`             | `"t".name = $1`              |
+| `Col::Name.neq(val)`            | `"t".name != $1`             |
+| `Col::Age.gt(val)`              | `"t".age > $1`               |
+| `Col::Age.gte(val)`             | `"t".age >= $1`              |
+| `Col::Age.lt(val)`              | `"t".age < $1`               |
+| `Col::Age.lte(val)`             | `"t".age <= $1`              |
+| `Col::Name.like(val)`           | `"t".name LIKE $1`           |
+| `Col::Name.ilike(val)`          | `"t".name ILIKE $1`          |
+| `Col::Id.in_(val)`              | `"t".id IN ($1)`             |
+| `Col::Id.not_in(val)`           | `"t".id NOT IN ($1)`         |
+| `Col::Email.is_null()`          | `"t".email IS NULL`          |
+| `Col::Email.is_not_null()`      | `"t".email IS NOT NULL`      |
+| `Col::Age.between(lo, hi)`      | `"t".age BETWEEN $1 AND $2`  |
+| `Col::Id.in_select(sub)`        | `"t".id IN (SELECT ...)`     |
+| `Col::Id.not_in_select(sub)`    | `"t".id NOT IN (SELECT ...)` |
+| `Col::Name.any(val)`            | `"t".name = ANY($1)`         |
+| `Col::Data.jsonb_text_eq(k, v)` | `"t".data ->> $1 = $2`       |
 
-| Operator | SqlOp | SQL Output |
-|----------|-------|------------|
-| `=` | `Eq` | `col = $1` |
-| `!=` | `Neq` | `col != $1` |
-| `>` | `Gt` | `col > $1` |
-| `>=` | `Gte` | `col >= $1` |
-| `<` | `Lt` | `col < $1` |
-| `<=` | `Lte` | `col <= $1` |
-| `IN` | `In` | `col IN $1` |
-| `NOT IN` | `NotIn` | `col NOT IN $1` |
-| `LIKE` | `Like` | `col LIKE $1` |
-| `ILIKE` | `ILike` | `col ILIKE $1` |
-| `BETWEEN` | `Between` | `col BETWEEN $1 AND $2` |
-| `IS NULL` | `IsNull` | `col IS NULL` |
-| `IS NOT NULL` | `IsNotNull` | `col IS NOT NULL` |
-| `EXISTS` | `Exists` | `EXISTS (SELECT ...)` |
-| `NOT EXISTS` | `NotExists` | `NOT EXISTS (SELECT ...)` |
-| `= ANY` | `Any` | `col = ANY ($1)` |
-| `= ALL` | `All` | `col = ALL ($1)` |
-| `+` | `Add` | `col + $1` |
-| `-` | `Sub` | `col - $1` |
-| `*` | `Mul` | `col * $1` |
-| `/` | `Div` | `col / $1` |
-| `->` | `JsonGet` | `col -> $1` |
-| `->>` | `JsonGetText` | `col ->> $1` |
-| `#>` | `JsonPath` | `col #> $1` |
-| `#>>` | `JsonPathText` | `col #>> $1` |
+### Col Aggregate / Function Methods
 
-## Functions Reference
+Methods that return `ExprCol<T>` (chain `.alias()`, `.eq()`, `.cast()`, etc.):
 
-| Function | SqlFn | Usage | SQL Output |
-|----------|-------|-------|------------|
-| `COUNT` | `Count` | `col_fn` | `COUNT(col)` |
-| `SUM` | `Sum` | `col_fn` | `SUM(col)` |
-| `AVG` | `Avg` | `col_fn` | `AVG(col)` |
-| `MIN` | `Min` | `col_fn` | `MIN(col)` |
-| `MAX` | `Max` | `col_fn` | `MAX(col)` |
-| `LOWER` | `Lower` | `col_fn`/`val_fn` | `LOWER(col)` / `LOWER($1)` |
-| `UPPER` | `Upper` | `col_fn`/`val_fn` | `UPPER(col)` / `UPPER($1)` |
-| `LENGTH` | `Length` | `col_fn`/`val_fn` | `LENGTH(col)` |
-| `TRIM` | `Trim` | `col_fn`/`val_fn` | `TRIM(col)` |
-| `CONCAT` | `Concat` | `val_fn` | `CONCAT($1)` |
-| `SUBSTRING` | `Substring` | `val_fn` | `SUBSTRING($1)` |
-| `COALESCE` | `Coalesce` | `val_fn` | `COALESCE($1)` |
-| `NOW()` | `Now` | `val_fn` | `NOW()` |
-| `TRUE` | `True` | `val_fn` | `TRUE` |
-| `FALSE` | `False` | `val_fn` | `FALSE` |
+| Col method                     | SQL Output                                    |
+| ------------------------------ | --------------------------------------------- |
+| `Col::Id.count()`              | `COUNT("t".id)`                               |
+| `Col::Age.sum()`               | `SUM("t".age)`                                |
+| `Col::Age.avg()`               | `AVG("t".age)`                                |
+| `Col::Age.min()`               | `MIN("t".age)`                                |
+| `Col::Age.max()`               | `MAX("t".age)`                                |
+| `Col::Name.lower()`            | `LOWER("t".name)`                             |
+| `Col::Name.upper()`            | `UPPER("t".name)`                             |
+| `Col::Data.json_get(key)`      | `"t".data -> $1`                              |
+| `Col::Data.json_get_text(key)` | `"t".data ->> $1`                             |
+| `Col::Name.col()`              | `"t".name` (raw ExprCol for further chaining) |
+
+### ExprCol Methods
+
+Additional methods available after `.column()` or `.col()`:
+
+| Method                  | SQL Output          |
+| ----------------------- | ------------------- |
+| `.cast("text")`         | `::text` appended   |
+| `.coalesce(fallback)`   | `COALESCE(buf, $1)` |
+| `.length()`             | `LENGTH(buf)`       |
+| `.trim()`               | `TRIM(buf)`         |
+| `.concat()`             | `CONCAT(buf)`       |
+| `.substring()`          | `SUBSTRING(buf)`    |
+| `.json_path(path)`      | `buf #> $1`         |
+| `.json_path_text(path)` | `buf #>> $1`        |
+| `.wrap_raw("FN")`       | `FN(buf)`           |
+| `.alias("name")`        | `buf AS name`       |
+
+### Expr Methods
+
+Methods on `Expr<T>` (base/terminal state):
+
+| Method                       | Effect                          |
+| ---------------------------- | ------------------------------- |
+| `.column(col)`               | Append `"table".col` -> ExprCol |
+| `.val(v)`                    | Append `$#` with bound param    |
+| `.now()`                     | Append `NOW()`                  |
+| `.null()`                    | Append `NULL`                   |
+| `.true_()` / `.false_()`     | Append `TRUE` / `FALSE`         |
+| `.raw(s)`                    | Append raw SQL                  |
+| `.and()`                     | Wrap in `()`, append `AND`      |
+| `.or()`                      | Wrap in `()`, append `OR`       |
+| `.and_bare()` / `.or_bare()` | Append `AND` / `OR` (no wrap)   |
+| `.not()`                     | Prepend `NOT `                  |
+| `.paren()`                   | Wrap buffer in `()`             |
+| `.cast("type")`              | Append `::type`                 |
+| `.wrap_raw("FN")`            | Wrap as `FN(buf)`               |
+| `.if_(condition)`            | Start `CASE WHEN ...` -> ExprIf |
+| `.exists(sub)`               | Append `EXISTS (subquery)`      |
+| `.not_exists(sub)`           | Append `NOT EXISTS (subquery)`  |
+| `.select(sub)`               | Append `(subquery)`             |
+| `Expr::greatest(a, b)`       | `GREATEST(a, b)`                |
+| `Expr::least(a, b)`          | `LEAST(a, b)`                   |
+
+### ExprOp Methods
+
+Methods available after an operator (`.eq()`, `.add()`, etc.):
+
+| Method         | Effect                          |
+| -------------- | ------------------------------- |
+| `.column(col)` | Append column ref -> ExprCol    |
+| `.val(v)`      | Append bound param -> Expr      |
+| `.now()`       | Append `NOW()` -> Expr          |
+| `.null()`      | Append `NULL` -> Expr           |
+| `.raw(s)`      | Append raw SQL -> Expr          |
+| `.select(sub)` | Append `(subquery)` -> Expr     |
+| `.if_(cond)`   | Start `CASE WHEN ...` -> ExprIf |
 
 ## Error Handling
 
-`SqlQueryError` is returned for invalid expression combinations:
+`SqlQueryError` is returned for invalid query combinations:
 
-| Error | Cause |
-|-------|-------|
-| `AndOrBothSet` | `.and()` and `.or()` on same expression |
-| `BetweenMissingBounds` | `BETWEEN` without both bounds |
-| `ExistsMissingSelect` | `EXISTS` without `.select()` |
-| `InsertValuesAlreadySet` | `.values()` called twice |
+| Error                             | Cause                                         |
+| --------------------------------- | --------------------------------------------- |
+| `InsertValuesAlreadySet`          | `.values()` called twice                      |
 | `DeleteRequiresFilterOrDeleteAll` | DELETE without `.filter()` or `.delete_all()` |
-| `CaseRequiresThenAndElse` | `.then()` without `.else_()` or vice versa |
 
 ## Parameter Types
 
 `SqlParam` variants with automatic `From` conversions:
 
-| Rust Type | SqlParam Variant |
-|-----------|-----------------|
-| `String` / `&str` | `String` |
-| `i16` | `I16` |
-| `i32` | `I32` |
-| `i64` | `I64` |
-| `f64` | `F64` |
-| `bool` | `Bool` |
-| `Decimal` | `Decimal` |
-| `serde_json::Value` | `Json` |
-| `DateTime<Utc>` | `DateTimeUtc` |
-| `Uuid` | `Uuid` |
-| `Vec<String>` | `StringArray` |
-| `Vec<i32>` | `I32Array` |
-| `Vec<i64>` | `I64Array` |
-| `Vec<f64>` | `F64Array` |
-| `Vec<bool>` | `BoolArray` |
-| `Vec<Decimal>` | `DecimalArray` |
-| `Vec<DateTime<Utc>>` | `DateTimeUtcArray` |
-| `Vec<Uuid>` | `UuidArray` |
-| `Option<T>` | `T` variant or `Null` |
-| `NaiveDate` | `DateTimeUtc` (midnight) |
+| Rust Type                      | SqlParam Variant                               |
+| ------------------------------ | ---------------------------------------------- |
+| `String` / `&str`              | `String`                                       |
+| `i16`                          | `I16`                                          |
+| `i32`                          | `I32`                                          |
+| `i64`                          | `I64`                                          |
+| `f64`                          | `F64`                                          |
+| `bool`                         | `Bool`                                         |
+| `Decimal`                      | `Decimal`                                      |
+| `serde_json::Value`            | `Json`                                         |
+| `DateTime<Utc>`                | `DateTimeUtc`                                  |
+| `Uuid`                         | `Uuid`                                         |
+| `Vec<String>`                  | `StringArray`                                  |
+| `Vec<i32>`                     | `I32Array`                                     |
+| `Vec<i64>`                     | `I64Array`                                     |
+| `Vec<f64>`                     | `F64Array`                                     |
+| `Vec<bool>`                    | `BoolArray`                                    |
+| `Vec<Decimal>`                 | `DecimalArray`                                 |
+| `Vec<DateTime<Utc>>`           | `DateTimeUtcArray`                             |
+| `Vec<Uuid>`                    | `UuidArray`                                    |
+| `Option<T>`                    | `T` variant or `Null`                          |
+| `NaiveDate`                    | `DateTimeUtc` (midnight)                       |
 | `#[derive(SqlParamEnum)]` enum | `Custom` (type-erased, preserves Postgres OID) |

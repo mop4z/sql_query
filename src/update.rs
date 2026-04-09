@@ -3,7 +3,7 @@ use sqlx::QueryBuilder;
 use crate::{
     SqlBase,
     shared::{
-        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::SqlExpr, prepend_ctes,
+        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::Expr, prepend_ctes,
         push_conditions, push_returning, value::SqlParam,
     },
 };
@@ -37,7 +37,7 @@ impl SqlUpdate {
     }
 
     /// Adds SET clauses for the columns to update.
-    pub fn set<T: Table>(mut self, exprs: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn set<T: Table>(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.set_clauses.extend(exprs.into_iter().map(|x| x.eval()));
         self
     }
@@ -49,13 +49,13 @@ impl SqlUpdate {
     }
 
     /// Adds WHERE conditions that are ANDed together.
-    pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning<T: Table>(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn returning<T: Table>(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
@@ -129,7 +129,6 @@ impl SqlBase for SqlUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::expr::{SqlFn, SqlOp};
     use crate::{SqlCols, define_id};
     use sqlx::FromRow;
 
@@ -163,8 +162,8 @@ mod tests {
         const PRIMARY_KEY: &'static str = "id";
     }
 
-    type UExpr = SqlExpr<Users>;
-    type PExpr = SqlExpr<Posts>;
+    type UExpr = Expr<Users>;
+    type PExpr = Expr<Posts>;
 
     fn build(update: SqlUpdate) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(update).unwrap();
@@ -174,8 +173,7 @@ mod tests {
 
     #[test]
     fn update_single_set() {
-        let (sql, binds) =
-            build(SqlUpdate::new::<Users>().set([UExpr::eq(UsersCol::Name, "alice")]));
+        let (sql, binds) = build(SqlUpdate::new::<Users>().set([UsersCol::Name.eq("alice")]));
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
@@ -183,8 +181,7 @@ mod tests {
     #[test]
     fn update_multiple_sets() {
         let (sql, binds) = build(
-            SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)]),
+            SqlUpdate::new::<Users>().set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)]),
         );
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1, "users".age = $2"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
@@ -194,8 +191,8 @@ mod tests {
     fn update_with_filter() {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "bob")])
-                .filter([UExpr::eq(UsersCol::Id, 1i32)]),
+                .set([UsersCol::Name.eq("bob")])
+                .filter([UsersCol::Id.eq(1i32)]),
         );
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1 WHERE 1=1 AND "users".id = $2"#,);
         assert_eq!(binds, vec![SqlParam::String("bob".into()), SqlParam::I32(1)]);
@@ -205,8 +202,8 @@ mod tests {
     fn update_with_filter_and_returning() {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "bob")])
-                .filter([UExpr::eq(UsersCol::Id, 1i32)])
+                .set([UsersCol::Name.eq("bob")])
+                .filter([UsersCol::Id.eq(1i32)])
                 .returning_all(),
         );
         assert_eq!(
@@ -218,12 +215,8 @@ mod tests {
 
     #[test]
     fn update_with_val_fn_now() {
-        let (sql, binds) = build(
-            SqlUpdate::new::<Users>().set([UExpr::column(UsersCol::Name)
-                .op(SqlOp::Eq)
-                .val(SqlParam::String("unused".into()))
-                .val_fn(SqlFn::Now)]),
-        );
+        let (sql, binds) =
+            build(SqlUpdate::new::<Users>().set([UExpr::new().column(UsersCol::Name).eq().now()]));
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = NOW()"#);
         assert!(binds.is_empty());
     }
@@ -232,11 +225,8 @@ mod tests {
     fn update_bind_ordering_set_before_where() {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "new_name"), UExpr::eq(UsersCol::Age, 25i32)])
-                .filter([
-                    UExpr::eq(UsersCol::Name, "old_name"),
-                    UExpr::column(UsersCol::Age).op(SqlOp::Gt).val(SqlParam::I32(18)),
-                ]),
+                .set([UsersCol::Name.eq("new_name"), UsersCol::Age.eq(25i32)])
+                .filter([UsersCol::Name.eq("old_name"), UsersCol::Age.gt(18i32)]),
         );
         assert_eq!(
             sql,
@@ -255,15 +245,17 @@ mod tests {
 
     #[test]
     fn update_with_or_filter() {
-        let (sql, binds) =
-            build(
-                SqlUpdate::new::<Users>().set([UExpr::eq(UsersCol::Age, 0i32)]).filter([
-                    UExpr::eq(UsersCol::Name, "alice").or(UExpr::eq(UsersCol::Name, "bob")),
-                ]),
-            );
+        let (sql, binds) = build(
+            SqlUpdate::new::<Users>().set([UsersCol::Age.eq(0i32)]).filter([UsersCol::Name
+                .eq("alice")
+                .or()
+                .column(UsersCol::Name)
+                .eq()
+                .val("bob")]),
+        );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".age = $1 WHERE 1=1 AND ("users".name = $2 OR "users".name = $3)"#,
+            r#"UPDATE "users" SET "users".age = $1 WHERE 1=1 AND ("users".name = $2) OR "users".name = $3"#,
         );
         assert_eq!(
             binds,
@@ -279,9 +271,9 @@ mod tests {
     fn update_from_single_table() {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "updated")])
+                .set([UsersCol::Name.eq("updated")])
                 .from::<Posts>()
-                .filter([UExpr::column(UsersCol::Id).op(SqlOp::Eq).val(SqlParam::I32(1))]),
+                .filter([UsersCol::Id.eq(1i32)]),
         );
         assert_eq!(
             sql,
@@ -294,10 +286,10 @@ mod tests {
     fn update_from_with_join_condition() {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "updated")])
+                .set([UsersCol::Name.eq("updated")])
                 .from::<Posts>()
-                .filter([UExpr::column(UsersCol::Id).op(SqlOp::Eq).val(SqlParam::I32(1))])
-                .filter([PExpr::eq(PostsCol::Title, "hello")]),
+                .filter([UsersCol::Id.eq(1i32)])
+                .filter([PostsCol::Title.eq("hello")]),
         );
         assert_eq!(
             sql,
@@ -315,11 +307,10 @@ mod tests {
 
     #[test]
     fn update_skips_null_sets_by_default() {
-        let (sql, binds) =
-            build(SqlUpdate::new::<Users>().set([
-                UExpr::eq(UsersCol::Name, "alice"),
-                UExpr::eq(UsersCol::Age, SqlParam::Null),
-            ]));
+        let (sql, binds) = build(
+            SqlUpdate::new::<Users>()
+                .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)]),
+        );
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
@@ -328,7 +319,7 @@ mod tests {
     fn update_include_nulls() {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>()
-                .set([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, SqlParam::Null)])
+                .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
                 .include_nulls(),
         );
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1, "users".age = $2"#);

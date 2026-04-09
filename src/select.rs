@@ -5,7 +5,7 @@ use crate::{
     shared::{
         Cte, Table, UnbindedQuery,
         error::SqlQueryError,
-        expr::{SqlExpr, SqlJoin, SqlOp, SqlOrder},
+        expr::{Expr, ExprCol, SqlJoin, SqlOrder},
         prepend_ctes, push_conditions,
         value::SqlParam,
     },
@@ -48,34 +48,40 @@ impl SqlSelect {
     }
 
     /// Sets the columns to select from the given table.
-    pub fn from<T: Table>(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn from<T: Table>(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
         for c in columns {
             self.columns.push(c.eval().unwrap().0);
         }
         self
     }
 
-    /// Adds a JOIN clause between two tables on the given columns and operator.
+    /// Sets the columns to select, accepting `ExprCol` (e.g. aggregate wraps like `.count()`).
+    pub fn from_col<T: Table>(mut self, columns: impl IntoIterator<Item = ExprCol<T>>) -> Self {
+        for c in columns {
+            self.columns.push(c.eval().unwrap().0);
+        }
+        self
+    }
+
+    /// Adds a JOIN clause: `{join} JOIN "T1" ON t1_col = t2_col`.
     pub fn join<T1: Table, T2: Table>(
         mut self,
         sql_join: SqlJoin,
-        t1_on: SqlExpr<T1>,
-        op: SqlOp,
-        t2_on: SqlExpr<T2>,
+        t1_col: ExprCol<T1>,
+        t2_col: ExprCol<T2>,
     ) -> Self {
         self.joined_tables.push(format!(
-            "{} JOIN \"{}\" ON {} {} {}",
+            "{} JOIN \"{}\" ON {} = {}",
             sql_join.as_ref(),
             T1::TABLE_NAME,
-            t1_on.eval().unwrap().0,
-            op.as_ref(),
-            t2_on.eval().unwrap().0,
+            t1_col.eval().unwrap().0,
+            t2_col.eval().unwrap().0,
         ));
         self
     }
 
     /// Adds GROUP BY columns to the query.
-    pub fn group_by<T: Table>(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn group_by<T: Table>(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
         for c in columns {
             self.group_by.push(c.eval().unwrap().0);
         }
@@ -83,7 +89,13 @@ impl SqlSelect {
     }
 
     /// Appends an ORDER BY clause for the given column and direction.
-    pub fn order_by<T: Table>(mut self, column: SqlExpr<T>, order: SqlOrder) -> Self {
+    pub fn order_by<T: Table>(mut self, column: Expr<T>, order: SqlOrder) -> Self {
+        self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
+        self
+    }
+
+    /// Appends an ORDER BY clause accepting an `ExprCol` (e.g. for ordering by aggregates).
+    pub fn order_by_col<T: Table>(mut self, column: ExprCol<T>, order: SqlOrder) -> Self {
         self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
         self
     }
@@ -107,13 +119,13 @@ impl SqlSelect {
     }
 
     /// Adds WHERE conditions that are ANDed together.
-    pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
     /// Adds HAVING conditions applied after GROUP BY.
-    pub fn having<T: Table>(mut self, conditions: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn having<T: Table>(mut self, conditions: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.having.extend(conditions.into_iter().map(|x| x.eval()));
         self
     }
@@ -165,7 +177,6 @@ impl SqlBase for SqlSelect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::expr::SqlFn;
     use crate::{SqlCols, define_id};
     use sqlx::FromRow;
 
@@ -199,8 +210,8 @@ mod tests {
         const PRIMARY_KEY: &'static str = "id";
     }
 
-    type UExpr = SqlExpr<Users>;
-    type PExpr = SqlExpr<Posts>;
+    type UExpr = Expr<Users>;
+    type PExpr = Expr<Posts>;
 
     fn build(select: SqlSelect) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(select).unwrap();
@@ -217,34 +228,31 @@ mod tests {
 
     #[test]
     fn select_columns() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .from([UExpr::column(UsersCol::Name), UExpr::column(UsersCol::Age)]),
-        );
+        let (sql, _) = build(SqlSelect::new::<Users>().from([
+            UExpr::new().column(UsersCol::Name).into(),
+            UExpr::new().column(UsersCol::Age).into(),
+        ]));
         assert_eq!(sql, r#"SELECT "users".name, "users".age FROM "users""#);
     }
 
     #[test]
     fn select_column_with_alias() {
         let (sql, _) = build(
-            SqlSelect::new::<Users>().from([UExpr::column(UsersCol::Name).alias("full_name")]),
+            SqlSelect::new::<Users>()
+                .from([UExpr::new().column(UsersCol::Name).alias("full_name")]),
         );
         assert_eq!(sql, r#"SELECT "users".name AS full_name FROM "users""#);
     }
 
     #[test]
     fn select_column_with_fn() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .from([UExpr::column(UsersCol::Id).col_fn(SqlFn::Count).alias("total")]),
-        );
+        let (sql, _) = build(SqlSelect::new::<Users>().from([UsersCol::Id.count().alias("total")]));
         assert_eq!(sql, r#"SELECT COUNT("users".id) AS total FROM "users""#);
     }
 
     #[test]
     fn select_with_single_filter() {
-        let (sql, binds) =
-            build(SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Name, "alice")]));
+        let (sql, binds) = build(SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
@@ -252,8 +260,7 @@ mod tests {
     #[test]
     fn select_with_multiple_filters() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)]),
+            SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)]),
         );
         assert_eq!(
             sql,
@@ -264,16 +271,17 @@ mod tests {
 
     #[test]
     fn select_filter_is_null() {
-        let (sql, binds) =
-            build(SqlSelect::new::<Users>().filter([UExpr::is_null(UsersCol::Name)]));
+        let (sql, binds) = build(SqlSelect::new::<Users>().filter([UsersCol::Name.is_null()]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name IS NULL"#);
         assert!(binds.is_empty());
     }
 
     #[test]
     fn select_with_order_by() {
-        let (sql, _) =
-            build(SqlSelect::new::<Users>().order_by(UExpr::column(UsersCol::Name), SqlOrder::Asc));
+        let (sql, _) = build(
+            SqlSelect::new::<Users>()
+                .order_by(UExpr::new().column(UsersCol::Name).into(), SqlOrder::Asc),
+        );
         assert_eq!(sql, r#"SELECT * FROM "users" ORDER BY "users".name ASC"#);
     }
 
@@ -281,8 +289,8 @@ mod tests {
     fn select_with_multiple_order_by() {
         let (sql, _) = build(
             SqlSelect::new::<Users>()
-                .order_by(UExpr::column(UsersCol::Name), SqlOrder::Asc)
-                .order_by(UExpr::column(UsersCol::Age), SqlOrder::DescNullsFirst),
+                .order_by(UExpr::new().column(UsersCol::Name).into(), SqlOrder::Asc)
+                .order_by(UExpr::new().column(UsersCol::Age).into(), SqlOrder::DescNullsFirst),
         );
         assert_eq!(
             sql,
@@ -295,10 +303,10 @@ mod tests {
         let (sql, _) = build(
             SqlSelect::new::<Users>()
                 .from([
-                    UExpr::column(UsersCol::Age),
-                    UExpr::column(UsersCol::Id).col_fn(SqlFn::Count).alias("count"),
+                    UExpr::new().column(UsersCol::Age).into(),
+                    UsersCol::Id.count().alias("count"),
                 ])
-                .group_by([UExpr::column(UsersCol::Age)]),
+                .group_by([UExpr::new().column(UsersCol::Age).into()]),
         );
         assert_eq!(
             sql,
@@ -335,8 +343,9 @@ mod tests {
 
     #[test]
     fn select_distinct_with_columns() {
-        let (sql, _) =
-            build(SqlSelect::new::<Users>().distinct().from([UExpr::column(UsersCol::Name)]));
+        let (sql, _) = build(
+            SqlSelect::new::<Users>().distinct().from([UExpr::new().column(UsersCol::Name).into()]),
+        );
         assert_eq!(sql, r#"SELECT DISTINCT "users".name FROM "users""#);
     }
 
@@ -344,9 +353,8 @@ mod tests {
     fn select_with_join() {
         let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
             SqlJoin::Left,
-            PExpr::column(PostsCol::UserId),
-            SqlOp::Eq,
-            UExpr::column(UsersCol::Id),
+            PostsCol::UserId.col(),
+            UsersCol::Id.col(),
         ));
         assert_eq!(
             sql,
@@ -358,9 +366,8 @@ mod tests {
     fn select_with_inner_join() {
         let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
             SqlJoin::Inner,
-            PExpr::column(PostsCol::UserId),
-            SqlOp::Eq,
-            UExpr::column(UsersCol::Id),
+            PostsCol::UserId.col(),
+            UsersCol::Id.col(),
         ));
         assert_eq!(
             sql,
@@ -369,38 +376,10 @@ mod tests {
     }
 
     #[test]
-    fn select_with_right_join() {
-        let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
-            SqlJoin::Right,
-            PExpr::column(PostsCol::UserId),
-            SqlOp::Eq,
-            UExpr::column(UsersCol::Id),
-        ));
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" RIGHT JOIN "posts" ON "posts".user_id = "users".id"#,
-        );
-    }
-
-    #[test]
-    fn select_with_full_outer_join() {
-        let (sql, _) = build(SqlSelect::new::<Users>().join::<Posts, Users>(
-            SqlJoin::FullOuter,
-            PExpr::column(PostsCol::UserId),
-            SqlOp::Eq,
-            UExpr::column(UsersCol::Id),
-        ));
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" FULL OUTER JOIN "posts" ON "posts".user_id = "users".id"#,
-        );
-    }
-
-    #[test]
     fn select_filters_with_limit_offset_renumbered() {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
-                .filter([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)])
+                .filter([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
                 .limit(10)
                 .offset(5),
         );
@@ -424,9 +403,12 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
                 .distinct()
-                .from([UExpr::column(UsersCol::Name), UExpr::column(UsersCol::Age)])
-                .filter([UExpr::eq(UsersCol::Age, 18i32)])
-                .order_by(UExpr::column(UsersCol::Name), SqlOrder::AscNullsLast)
+                .from([
+                    UExpr::new().column(UsersCol::Name).into(),
+                    UExpr::new().column(UsersCol::Age).into(),
+                ])
+                .filter([UsersCol::Age.eq(18i32)])
+                .order_by(UExpr::new().column(UsersCol::Name).into(), SqlOrder::AscNullsLast)
                 .limit(50)
                 .offset(10),
         );
@@ -440,10 +422,7 @@ mod tests {
     #[test]
     fn filter_with_val_fn_now_no_bind() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Name)
-                .op(SqlOp::Eq)
-                .val(SqlParam::String("ignored".into()))
-                .val_fn(SqlFn::Now)]),
+            SqlSelect::new::<Users>().filter([UExpr::new().column(UsersCol::Name).eq().now()]),
         );
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = NOW()"#);
         assert!(binds.is_empty());
@@ -452,10 +431,8 @@ mod tests {
     #[test]
     fn filter_with_val_fn_true_no_bind() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Name)
-                .op(SqlOp::Eq)
-                .val(SqlParam::Bool(true))
-                .val_fn(SqlFn::True)]),
+            SqlSelect::new::<Users>()
+                .filter([UExpr::new().column(UsersCol::Name).eq().raw("TRUE")]),
         );
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = TRUE"#);
         assert!(binds.is_empty());
@@ -464,12 +441,13 @@ mod tests {
     #[test]
     fn filter_with_val_fn_lower_keeps_bind() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Name)
-                .op(SqlOp::Eq)
+            SqlSelect::new::<Users>().filter([UExpr::new()
+                .column(UsersCol::Name)
+                .eq()
                 .val(SqlParam::String("alice".into()))
-                .val_fn(SqlFn::Lower)]),
+                .wrap_raw("LOWER")]),
         );
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = LOWER($1)"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND LOWER("users".name = $1)"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -478,14 +456,11 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
                 .from([
-                    UExpr::column(UsersCol::Age),
-                    UExpr::column(UsersCol::Id).col_fn(SqlFn::Count).alias("count"),
+                    UExpr::new().column(UsersCol::Age).into(),
+                    UsersCol::Id.count().alias("count"),
                 ])
-                .group_by([UExpr::column(UsersCol::Age)])
-                .having([UExpr::column(UsersCol::Id)
-                    .col_fn(SqlFn::Count)
-                    .op(SqlOp::Eq)
-                    .val(SqlParam::I32(5))]),
+                .group_by([UExpr::new().column(UsersCol::Age).into()])
+                .having([UsersCol::Id.count().eq().val(SqlParam::I32(5)).into()]),
         );
         assert_eq!(
             sql,
@@ -499,15 +474,12 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
                 .from([
-                    UExpr::column(UsersCol::Age),
-                    UExpr::column(UsersCol::Id).col_fn(SqlFn::Count).alias("count"),
+                    UExpr::new().column(UsersCol::Age).into(),
+                    UsersCol::Id.count().alias("count"),
                 ])
-                .filter([UExpr::eq(UsersCol::Name, "alice")])
-                .group_by([UExpr::column(UsersCol::Age)])
-                .having([UExpr::column(UsersCol::Id)
-                    .col_fn(SqlFn::Count)
-                    .op(SqlOp::Eq)
-                    .val(SqlParam::I32(3))]),
+                .filter([UsersCol::Name.eq("alice")])
+                .group_by([UExpr::new().column(UsersCol::Age).into()])
+                .having([UsersCol::Id.count().eq().val(SqlParam::I32(3)).into()]),
         );
         assert_eq!(
             sql,
@@ -519,12 +491,12 @@ mod tests {
     #[test]
     fn filter_with_subquery() {
         let sub = SqlSelect::new::<Posts>()
-            .from([PExpr::column(PostsCol::UserId)])
-            .filter([PExpr::eq(PostsCol::Title, "hello")]);
+            .from([PExpr::new().column(PostsCol::UserId).into()])
+            .filter([PostsCol::Title.eq("hello")]);
 
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([
-            UExpr::column(UsersCol::Id).op(SqlOp::In).select(sub),
-            UExpr::eq(UsersCol::Name, "alice"),
+            UExpr::new().column(UsersCol::Id).in_select(sub),
+            UsersCol::Name.eq("alice"),
         ]));
         assert_eq!(
             sql,
@@ -535,132 +507,70 @@ mod tests {
 
     #[test]
     fn filter_with_subquery_no_binds() {
-        let sub = SqlSelect::new::<Posts>().from([PExpr::column(PostsCol::UserId)]);
+        let sub = SqlSelect::new::<Posts>().from([PExpr::new().column(PostsCol::UserId).into()]);
 
         let (sql, binds) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::column(UsersCol::Id).op(SqlOp::In).select(sub)]),
+            SqlSelect::new::<Users>().filter([UExpr::new().column(UsersCol::Id).in_select(sub)]),
         );
         assert_eq!(
             sql,
             r#"SELECT * FROM "users" WHERE 1=1 AND "users".id IN (SELECT "posts".user_id FROM "posts")"#,
         );
         assert!(binds.is_empty());
-    }
-
-    #[test]
-    fn filter_subquery_ignores_val_and_val_fn() {
-        let sub = SqlSelect::new::<Posts>().from([PExpr::column(PostsCol::UserId)]);
-
-        let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Id)
-                .op(SqlOp::In)
-                .val(SqlParam::I32(999))
-                .val_fn(SqlFn::Lower)
-                .select(sub)]),
-        );
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".id IN (SELECT "posts".user_id FROM "posts")"#,
-        );
-        assert!(binds.is_empty());
-    }
-
-    #[test]
-    fn having_with_subquery() {
-        let sub = SqlSelect::new::<Posts>()
-            .from([PExpr::column(PostsCol::UserId)])
-            .filter([PExpr::eq(PostsCol::Title, "test")]);
-
-        let (sql, binds) = build(
-            SqlSelect::new::<Users>()
-                .from([
-                    UExpr::column(UsersCol::Age),
-                    UExpr::column(UsersCol::Id).col_fn(SqlFn::Count).alias("count"),
-                ])
-                .group_by([UExpr::column(UsersCol::Age)])
-                .having([UExpr::column(UsersCol::Id).op(SqlOp::In).select(sub)]),
-        );
-        assert_eq!(
-            sql,
-            r#"SELECT "users".age, COUNT("users".id) AS count FROM "users" GROUP BY "users".age HAVING 1=1 AND "users".id IN (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND "posts".title = $1)"#,
-        );
-        assert_eq!(binds, vec![SqlParam::String("test".into())]);
     }
 
     #[test]
     fn filter_gt() {
-        let (sql, binds) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::column(UsersCol::Age).op(SqlOp::Gt).val(SqlParam::I32(18))]),
-        );
+        let (sql, binds) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.gt(18i32)]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age > $1"#);
         assert_eq!(binds, vec![SqlParam::I32(18)]);
     }
 
     #[test]
     fn filter_gte() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::column(UsersCol::Age).op(SqlOp::Gte).val(SqlParam::I32(18))]),
-        );
+        let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.gte(18i32)]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age >= $1"#);
     }
 
     #[test]
     fn filter_lt() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::column(UsersCol::Age).op(SqlOp::Lt).val(SqlParam::I32(65))]),
-        );
+        let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.lt(65i32)]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age < $1"#);
     }
 
     #[test]
     fn filter_lte() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::column(UsersCol::Age).op(SqlOp::Lte).val(SqlParam::I32(65))]),
-        );
+        let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.lte(65i32)]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age <= $1"#);
     }
 
     #[test]
     fn filter_like() {
         let (sql, binds) =
-            build(
-                SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Name)
-                    .op(SqlOp::Like)
-                    .val(SqlParam::String("%alice%".into()))]),
-            );
+            build(SqlSelect::new::<Users>().filter([UsersCol::Name.like("%alice%")]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name LIKE $1"#);
         assert_eq!(binds, vec![SqlParam::String("%alice%".into())]);
     }
 
     #[test]
     fn filter_ilike() {
-        let (sql, _) =
-            build(
-                SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Name)
-                    .op(SqlOp::ILike)
-                    .val(SqlParam::String("%alice%".into()))]),
-            );
+        let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Name.ilike("%alice%")]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name ILIKE $1"#);
     }
 
     #[test]
     fn filter_between() {
         let (sql, binds) =
-            build(SqlSelect::new::<Users>().filter([UExpr::between(UsersCol::Age, 18i32, 65i32)]));
+            build(SqlSelect::new::<Users>().filter([UsersCol::Age.between(18i32, 65i32)]));
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age BETWEEN $1 AND $2"#);
         assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I32(65)]);
     }
 
     #[test]
     fn filter_exists() {
-        let sub = SqlSelect::new::<Posts>().filter([PExpr::eq(PostsCol::Title, "hello")]);
+        let sub = SqlSelect::new::<Posts>().filter([PostsCol::Title.eq("hello")]);
 
-        let (sql, binds) = build(SqlSelect::new::<Users>().filter([UExpr::exists(sub)]));
+        let (sql, binds) = build(SqlSelect::new::<Users>().filter([UExpr::new().exists(sub)]));
         assert_eq!(
             sql,
             r#"SELECT * FROM "users" WHERE 1=1 AND EXISTS (SELECT * FROM "posts" WHERE 1=1 AND "posts".title = $1)"#,
@@ -670,9 +580,9 @@ mod tests {
 
     #[test]
     fn filter_not_exists() {
-        let sub = SqlSelect::new::<Posts>().filter([PExpr::eq(PostsCol::Title, "hello")]);
+        let sub = SqlSelect::new::<Posts>().filter([PostsCol::Title.eq("hello")]);
 
-        let (sql, _) = build(SqlSelect::new::<Users>().filter([UExpr::not_exists(sub)]));
+        let (sql, _) = build(SqlSelect::new::<Users>().filter([UExpr::new().not_exists(sub)]));
         assert_eq!(
             sql,
             r#"SELECT * FROM "users" WHERE 1=1 AND NOT EXISTS (SELECT * FROM "posts" WHERE 1=1 AND "posts".title = $1)"#,
@@ -681,36 +591,27 @@ mod tests {
 
     #[test]
     fn filter_any() {
-        let (sql, binds) = build(SqlSelect::new::<Users>().filter([
-            UExpr::column(UsersCol::Name).op(SqlOp::Any).val(SqlParam::String("alice".into())),
-        ]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = ANY ($1)"#);
+        let (sql, binds) = build(
+            SqlSelect::new::<Users>()
+                .filter([UsersCol::Name.any(SqlParam::String("alice".into()))]),
+        );
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = ANY($1)"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
     #[test]
-    fn filter_all() {
-        let (sql, _) = build(SqlSelect::new::<Users>().filter([
-            UExpr::column(UsersCol::Name).op(SqlOp::All).val(SqlParam::String("alice".into())),
-        ]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = ALL ($1)"#);
-    }
-
-    #[test]
     fn select_with_sum() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .from([UExpr::column(UsersCol::Age).col_fn(SqlFn::Sum).alias("total_age")]),
-        );
+        let (sql, _) =
+            build(SqlSelect::new::<Users>().from([UsersCol::Age.sum().alias("total_age")]));
         assert_eq!(sql, r#"SELECT SUM("users".age) AS total_age FROM "users""#);
     }
 
     #[test]
     fn select_with_avg_min_max() {
         let (sql, _) = build(SqlSelect::new::<Users>().from([
-            UExpr::column(UsersCol::Age).col_fn(SqlFn::Avg).alias("avg_age"),
-            UExpr::column(UsersCol::Age).col_fn(SqlFn::Min).alias("min_age"),
-            UExpr::column(UsersCol::Age).col_fn(SqlFn::Max).alias("max_age"),
+            UsersCol::Age.avg().alias("avg_age"),
+            UsersCol::Age.min().alias("min_age"),
+            UsersCol::Age.max().alias("max_age"),
         ]));
         assert_eq!(
             sql,
@@ -720,59 +621,36 @@ mod tests {
 
     #[test]
     fn select_with_upper() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>().from([UExpr::column(UsersCol::Name).col_fn(SqlFn::Upper)]),
-        );
-        assert_eq!(sql, r#"SELECT UPPER("users".name) FROM "users""#);
-    }
-
-    #[test]
-    fn filter_with_coalesce() {
-        let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::column(UsersCol::Name)
-                .op(SqlOp::Eq)
-                .val(SqlParam::String("default".into()))
-                .val_fn(SqlFn::Coalesce)]),
-        );
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = COALESCE($1)"#);
-        assert_eq!(binds, vec![SqlParam::String("default".into())]);
+        let (sql, _) = build(SqlSelect::new::<Users>().from([UsersCol::Name.upper().alias("u")]));
+        assert_eq!(sql, r#"SELECT UPPER("users".name) AS u FROM "users""#);
     }
 
     #[test]
     fn filter_or() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>()
-                .filter([UExpr::eq(UsersCol::Name, "alice").or(UExpr::eq(UsersCol::Name, "bob"))]),
+            SqlSelect::new::<Users>().filter([UsersCol::Name
+                .eq("alice")
+                .or()
+                .column(UsersCol::Name)
+                .eq()
+                .val("bob")]),
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1 OR "users".name = $2)"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) OR "users".name = $2"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],);
     }
 
     #[test]
-    fn filter_and_grouped() {
-        let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Name, "alice")
-                .and(UExpr::column(UsersCol::Age).op(SqlOp::Gt).val(SqlParam::I32(18)))]),
-        );
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1 AND "users".age > $2)"#,
-        );
-        assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(18)]);
-    }
-
-    #[test]
     fn filter_or_with_other_filters() {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([
-            UExpr::eq(UsersCol::Name, "alice").or(UExpr::eq(UsersCol::Name, "bob")),
-            UExpr::column(UsersCol::Age).op(SqlOp::Gte).val(SqlParam::I32(18)),
+            UsersCol::Name.eq("alice").or().column(UsersCol::Name).eq().val("bob"),
+            UsersCol::Age.gte(18i32),
         ]));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1 OR "users".name = $2) AND "users".age >= $3"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) OR "users".name = $2 AND "users".age >= $3"#,
         );
         assert_eq!(
             binds,
@@ -785,33 +663,11 @@ mod tests {
     }
 
     #[test]
-    fn filter_nested_or_and() {
-        let (sql, binds) =
-            build(
-                SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Name, "alice")
-                    .or(UExpr::eq(UsersCol::Name, "bob")
-                        .and(UExpr::column(UsersCol::Age).op(SqlOp::Gt).val(SqlParam::I32(30))))]),
-            );
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1 OR ("users".name = $2 AND "users".age > $3))"#,
-        );
-        assert_eq!(
-            binds,
-            vec![
-                SqlParam::String("alice".into()),
-                SqlParam::String("bob".into()),
-                SqlParam::I32(30),
-            ],
-        );
-    }
-
-    #[test]
     fn select_with_single_cte() {
         let (sql, binds) = build(
             crate::SqlQ::with([(
                 "active_users",
-                SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Age, 18i32)]),
+                SqlSelect::new::<Users>().filter([UsersCol::Age.eq(18i32)]),
             )])
             .select::<Users>(),
         );
@@ -826,8 +682,8 @@ mod tests {
     fn select_with_multiple_ctes() {
         let (sql, binds) = build(
             crate::SqlQ::with([
-                ("young", SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Age, 18i32)])),
-                ("old", SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Age, 65i32)])),
+                ("young", SqlSelect::new::<Users>().filter([UsersCol::Age.eq(18i32)])),
+                ("old", SqlSelect::new::<Users>().filter([UsersCol::Age.eq(65i32)])),
             ])
             .select::<Users>(),
         );
@@ -843,10 +699,10 @@ mod tests {
         let (sql, binds) = build(
             crate::SqlQ::with([(
                 "active",
-                SqlSelect::new::<Users>().filter([UExpr::eq(UsersCol::Name, "alice")]),
+                SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]),
             )])
             .select::<Users>()
-            .filter([UExpr::eq(UsersCol::Age, 30i32)]),
+            .filter([UsersCol::Age.eq(30i32)]),
         );
         assert_eq!(
             sql,

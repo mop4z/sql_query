@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, marker::PhantomData};
 
 use crate::{
     SqlBase,
@@ -6,486 +6,651 @@ use crate::{
     shared::{Table, error::SqlQueryError, value::SqlParam},
 };
 
-/// A composable SQL expression that can represent columns, operators, values, and subqueries.
-pub struct SqlExpr<T: Table> {
-    pub(crate) col: Option<T::Col>,
-    col_fn: Option<SqlFn>,
-    pub(crate) op: Option<SqlOp>,
-    pub(crate) val: Option<SqlParam>,
-    val2: Option<SqlParam>,
-    val_fn: Option<SqlFn>,
-    alias: Option<&'static str>,
-    select: Option<SqlSelect>,
-    and: Option<Box<SqlExpr<T>>>,
-    or: Option<Box<SqlExpr<T>>>,
-    then: Option<Box<SqlExpr<T>>>,
-    else_: Option<Box<SqlExpr<T>>>,
-    negate: bool,
+// ---------------------------------------------------------------------------
+// Internal buffer shared by all typestate structs
+// ---------------------------------------------------------------------------
+
+struct ExprBuf<T: Table> {
+    buf: String,
+    binds: Vec<SqlParam>,
+    _t: PhantomData<T>,
 }
 
-impl<T: Table> SqlExpr<T> {
-    fn empty() -> Self {
-        Self {
-            col: None,
-            col_fn: None,
-            op: None,
-            val: None,
-            val2: None,
-            val_fn: None,
-            alias: None,
-            select: None,
-            and: None,
-            or: None,
-            then: None,
-            else_: None,
-            negate: false,
-        }
+impl<T: Table> ExprBuf<T> {
+    fn new() -> Self {
+        Self { buf: String::new(), binds: Vec::new(), _t: PhantomData }
     }
 
-    /// Creates a new expression referencing the given column.
-    pub fn column(col: T::Col) -> Self {
-        Self::empty().col(col)
+    fn push(&mut self, s: &str) {
+        self.buf.push_str(s);
     }
 
-    /// Creates an IS NULL check on the given column.
-    pub fn is_null(col: T::Col) -> Self {
-        Self::empty().col(col).op(SqlOp::IsNull)
+    fn push_col(&mut self, col: T::Col) {
+        write!(self.buf, "\"{}\".{}", T::TABLE_NAME, col.as_ref()).unwrap();
     }
 
-    /// Creates an IS NOT NULL check on the given column.
-    pub fn is_not_null(col: T::Col) -> Self {
-        Self::empty().col(col).op(SqlOp::IsNotNull)
+    fn push_val(&mut self, v: impl Into<SqlParam>) {
+        self.buf.push_str("$#");
+        self.binds.push(v.into());
     }
 
-    /// Creates an equality comparison: col = val.
-    pub fn eq(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Eq).val(val.into())
+    fn wrap_fn(&mut self, name: &str) {
+        self.buf.insert_str(0, "(");
+        self.buf.insert_str(0, name);
+        self.buf.push(')');
     }
 
-    /// Creates a not-equal comparison: col != val.
-    pub fn neq(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Neq).val(val.into())
+    fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
+        Ok((self.buf, self.binds))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Expr<T> — base / terminal state
+// ---------------------------------------------------------------------------
+
+/// Base / terminal state of the expression builder.
+///
+/// Start here with `Expr::new()`, chain methods to build SQL, and call `.eval()` to finalize.
+/// Most query builder methods (`.filter()`, `.set()`, etc.) accept `Expr<T>` directly.
+///
+/// ```ignore
+/// use sql_query::Expr;
+/// type E = Expr<Users>;
+///
+/// // Simple: col = val
+/// E::new().column(UC::Name).eq().val("alice")
+///
+/// // Self-ref arithmetic: col = col + val
+/// E::new().column(UC::Balance).eq().column(UC::Balance).add().val(amount)
+///
+/// // CASE WHEN
+/// E::new().column(UC::Status).eq()
+///     .if_(E::new().val(is_active))
+///     .then_(E::new().raw("'active'"))
+///     .else_(E::new().raw("'inactive'"))
+/// ```
+pub struct Expr<T: Table>(ExprBuf<T>);
+
+impl<T: Table> Expr<T> {
+    /// Start a new empty expression.
+    pub fn new() -> Self {
+        Self(ExprBuf::new())
     }
 
-    /// Creates a greater-than comparison: col > val.
-    pub fn gt(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Gt).val(val.into())
+    /// Append a qualified column reference: `"table".col`.
+    pub fn column(mut self, col: T::Col) -> ExprCol<T> {
+        self.0.push_col(col);
+        ExprCol(self.0)
     }
 
-    /// Creates a greater-than-or-equal comparison: col >= val.
-    pub fn gte(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Gte).val(val.into())
-    }
-
-    /// Creates a less-than comparison: col < val.
-    pub fn lt(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Lt).val(val.into())
-    }
-
-    /// Creates a less-than-or-equal comparison: col <= val.
-    pub fn lte(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Lte).val(val.into())
-    }
-
-    /// Creates a LIKE pattern match: col LIKE val.
-    pub fn like(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Like).val(val.into())
-    }
-
-    /// Creates a case-insensitive ILIKE pattern match: col ILIKE val.
-    pub fn ilike(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::ILike).val(val.into())
-    }
-
-    /// Creates an IN check: col IN val.
-    pub fn in_(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::In).val(val.into())
-    }
-
-    /// Creates a NOT IN check: col NOT IN val.
-    pub fn not_in(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::NotIn).val(val.into())
-    }
-
-    /// Creates a BETWEEN check on the given column with lower and upper bounds.
-    pub fn between(col: T::Col, lo: impl Into<SqlParam>, hi: impl Into<SqlParam>) -> Self {
-        let mut e = Self::empty().col(col).op(SqlOp::Between).val(lo.into());
-        e.val2 = Some(hi.into());
-        e
-    }
-
-    /// Creates an IN subquery check: col IN (SELECT ...).
-    pub fn in_select(col: T::Col, select: SqlSelect) -> Self {
-        Self::empty().col(col).op(SqlOp::In).select(select)
-    }
-
-    /// Creates a NOT IN subquery check: col NOT IN (SELECT ...).
-    pub fn not_in_select(col: T::Col, select: SqlSelect) -> Self {
-        Self::empty().col(col).op(SqlOp::NotIn).select(select)
-    }
-
-    /// Creates an EXISTS check wrapping the given subquery.
-    pub fn exists(select: SqlSelect) -> Self {
-        Self::empty().op(SqlOp::Exists).select(select)
-    }
-
-    /// Creates a NOT EXISTS check wrapping the given subquery.
-    pub fn not_exists(select: SqlSelect) -> Self {
-        Self::empty().op(SqlOp::NotExists).select(select)
-    }
-
-    /// Creates a COUNT(col) expression.
-    pub fn count(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Count)
-    }
-
-    /// Creates a SUM(col) expression.
-    pub fn sum(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Sum)
-    }
-
-    /// Creates an AVG(col) expression.
-    pub fn avg(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Avg)
-    }
-
-    /// Creates a MIN(col) expression.
-    pub fn min(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Min)
-    }
-
-    /// Creates a MAX(col) expression.
-    pub fn max(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Max)
-    }
-
-    /// Creates a LOWER(col) expression.
-    pub fn lower(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Lower)
-    }
-
-    /// Creates an UPPER(col) expression.
-    pub fn upper(col: T::Col) -> Self {
-        Self::column(col).col_fn(SqlFn::Upper)
-    }
-
-    /// Creates a col -> key JSON get expression.
-    pub fn json_get(col: T::Col, key: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::JsonGet).val(key.into())
-    }
-
-    /// Creates a col ->> key JSON get text expression.
-    pub fn json_get_text(col: T::Col, key: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::JsonGetText).val(key.into())
-    }
-
-    /// Creates a col ->> key = val JSONB text equality check.
-    pub fn jsonb_text_eq(col: T::Col, key: impl Into<SqlParam>, val: impl Into<SqlParam>) -> Self {
-        let mut e = Self::empty().col(col).op(SqlOp::JsonGetTextEq).val(key.into());
-        e.val2 = Some(val.into());
-        e
-    }
-
-    /// Creates an = ANY(val) check on the given column.
-    pub fn any(col: T::Col, val: impl Into<SqlParam>) -> Self {
-        Self::empty().col(col).op(SqlOp::Any).val(val.into())
-    }
-
-    /// Sets the THEN branch for a CASE WHEN expression.
-    pub fn then(mut self, expr: SqlExpr<T>) -> Self {
-        self.then = Some(Box::new(expr));
+    /// Append a bound parameter placeholder.
+    pub fn val(mut self, v: impl Into<SqlParam>) -> Self {
+        self.0.push_val(v);
         self
     }
 
-    /// Sets the ELSE branch for a CASE WHEN expression.
-    pub fn else_(mut self, expr: SqlExpr<T>) -> Self {
-        self.else_ = Some(Box::new(expr));
+    /// Append `NOW()`.
+    pub fn now(mut self) -> Self {
+        self.0.push("NOW()");
         self
     }
 
-    /// Sets the column for this expression.
-    pub fn col(mut self, col: T::Col) -> Self {
-        self.col = Some(col);
+    /// Append `NULL`.
+    pub fn null(mut self) -> Self {
+        self.0.push("NULL");
         self
     }
 
-    /// Wraps the column in a SQL function (e.g. COUNT, LOWER).
-    pub fn col_fn(mut self, col_fn: SqlFn) -> Self {
-        self.col_fn = Some(col_fn);
+    /// Append `TRUE`.
+    pub fn true_(mut self) -> Self {
+        self.0.push("TRUE");
         self
     }
 
-    /// Sets the SQL operator for this expression.
-    pub fn op(mut self, op: SqlOp) -> Self {
-        self.op = Some(op);
+    /// Append `FALSE`.
+    pub fn false_(mut self) -> Self {
+        self.0.push("FALSE");
         self
     }
 
-    /// Sets the bound parameter value for this expression.
-    pub fn val(mut self, val: impl Into<SqlParam>) -> Self {
-        self.val = Some(val.into());
+    /// Append raw SQL verbatim.
+    pub fn raw(mut self, s: &str) -> Self {
+        self.0.push(s);
         self
     }
 
-    /// Wraps the value in a SQL function (e.g. LOWER, NOW).
-    pub fn val_fn(mut self, val_fn: SqlFn) -> Self {
-        self.val_fn = Some(val_fn);
+    /// Wrap the current expression in `(…)`, append ` AND `, and continue.
+    pub fn and(mut self) -> Self {
+        self.0.buf.insert(0, '(');
+        self.0.push(") AND ");
         self
     }
 
-    /// Sets an AS alias for the expression output.
-    pub fn alias(mut self, alias: &'static str) -> Self {
-        self.alias = Some(alias);
+    /// Wrap the current expression in `(…)`, append ` OR `, and continue.
+    pub fn or(mut self) -> Self {
+        self.0.buf.insert(0, '(');
+        self.0.push(") OR ");
         self
     }
 
-    /// Sets a subquery as the value side of this expression.
-    pub fn select(mut self, select: SqlSelect) -> Self {
-        self.select = Some(select);
+    /// Append ` AND ` without wrapping.
+    pub fn and_bare(mut self) -> Self {
+        self.0.push(" AND ");
         self
     }
 
-    /// Combines this expression with another using AND.
-    pub fn and(mut self, other: SqlExpr<T>) -> Self {
-        self.and = Some(Box::new(other));
+    /// Append ` OR ` without wrapping.
+    pub fn or_bare(mut self) -> Self {
+        self.0.push(" OR ");
         self
     }
 
-    /// Combines this expression with another using OR.
-    pub fn or(mut self, other: SqlExpr<T>) -> Self {
-        self.or = Some(Box::new(other));
-        self
-    }
-
-    /// Negates the entire expression with NOT.
+    /// Prepend `NOT ` to the entire expression.
     pub fn not(mut self) -> Self {
-        self.negate = true;
+        self.0.buf.insert_str(0, "NOT ");
         self
     }
 
-    pub(crate) fn into_col_and_val(mut self) -> (Option<String>, Self) {
-        let col = self.col.take().map(|c| c.as_ref().to_string());
-        self.op = None;
-        (col, self)
+    /// Begin a `CASE WHEN <condition> …` block.
+    pub fn if_(mut self, condition: Expr<T>) -> ExprIf<T> {
+        let (cond_sql, cond_binds) = condition.0.eval().unwrap();
+        self.0.push("CASE WHEN ");
+        self.0.push(&cond_sql);
+        self.0.binds.extend(cond_binds);
+        ExprIf(self.0)
     }
 
-    /// Evaluates the expression into a SQL string and its bound parameters.
+    /// Wrap the entire buffer in parentheses: `(buf)`.
+    pub fn paren(mut self) -> Self {
+        self.0.buf.insert(0, '(');
+        self.0.push(")");
+        self
+    }
+
+    /// Append a type cast: `::ty`.
+    pub fn cast(mut self, ty: &str) -> Self {
+        write!(self.0.buf, "::{}", ty).unwrap();
+        self
+    }
+
+    /// Wrap the buffer with an arbitrary function: `name(buf)`.
+    /// Escape hatch for functions not yet supported as dedicated methods.
+    pub fn wrap_raw(mut self, name: &str) -> Self {
+        self.0.buf.insert(0, '(');
+        self.0.buf.insert_str(0, name);
+        self.0.push(")");
+        self
+    }
+
+    /// `GREATEST(a, b)` — returns the larger of two expressions.
+    pub fn greatest(a: impl Into<Expr<T>>, b: impl Into<Expr<T>>) -> Self {
+        let a: Expr<T> = a.into();
+        let b: Expr<T> = b.into();
+        let (a_sql, a_binds) = a.0.eval().unwrap();
+        let (b_sql, b_binds) = b.0.eval().unwrap();
+        let mut e = Self::new();
+        write!(e.0.buf, "GREATEST({}, {})", a_sql, b_sql).unwrap();
+        e.0.binds.extend(a_binds);
+        e.0.binds.extend(b_binds);
+        e
+    }
+
+    /// `LEAST(a, b)` — returns the smaller of two expressions.
+    pub fn least(a: impl Into<Expr<T>>, b: impl Into<Expr<T>>) -> Self {
+        let a: Expr<T> = a.into();
+        let b: Expr<T> = b.into();
+        let (a_sql, a_binds) = a.0.eval().unwrap();
+        let (b_sql, b_binds) = b.0.eval().unwrap();
+        let mut e = Self::new();
+        write!(e.0.buf, "LEAST({}, {})", a_sql, b_sql).unwrap();
+        e.0.binds.extend(a_binds);
+        e.0.binds.extend(b_binds);
+        e
+    }
+
+    /// Append `EXISTS (subquery)`.
+    pub fn exists(self, q: SqlSelect) -> Self {
+        self.raw("EXISTS ").select(q)
+    }
+
+    /// Append `NOT EXISTS (subquery)`.
+    pub fn not_exists(self, q: SqlSelect) -> Self {
+        self.raw("NOT EXISTS ").select(q)
+    }
+
+    /// Append a parenthesised subquery.
+    pub fn select(mut self, q: SqlSelect) -> Self {
+        let uq = SqlBase::build(q).expect("subquery build failed");
+        let (sub_sql, sub_binds) = uq.into_raw();
+        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.binds.extend(sub_binds);
+        self
+    }
+
+    /// Finalise the expression into its SQL string and bound parameters.
     pub fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
-        if self.and.is_some() && self.or.is_some() {
-            return Err(SqlQueryError::AndOrBothSet);
-        }
-
-        let mut out = String::new();
-        let mut binds = Vec::new();
-
-        if let Some(col) = &self.col {
-            match &self.col_fn {
-                Some(f) => write!(out, "{}(\"{}\".{})", f.as_ref(), T::TABLE_NAME, col.as_ref()),
-                None => write!(out, "\"{}\".{}", T::TABLE_NAME, col.as_ref()),
-            }
-            .unwrap();
-        }
-
-        match &self.op {
-            Some(SqlOp::IsNull | SqlOp::IsNotNull) => {
-                write!(out, " {}", self.op.as_ref().unwrap().as_ref()).unwrap();
-            }
-            Some(SqlOp::Exists | SqlOp::NotExists) => {
-                if self.select.is_none() {
-                    return Err(SqlQueryError::ExistsMissingSelect);
-                }
-                write!(out, "{} ", self.op.as_ref().unwrap().as_ref()).unwrap();
-                Self::write_val(self.select, self.val, &self.val_fn, &mut out, &mut binds);
-            }
-            Some(SqlOp::Between) => {
-                if self.val.is_none() || self.val2.is_none() {
-                    return Err(SqlQueryError::BetweenMissingBounds);
-                }
-                write!(out, " BETWEEN $# AND $#").unwrap();
-                binds.push(self.val.unwrap());
-                binds.push(self.val2.unwrap());
-            }
-            Some(SqlOp::JsonGetTextEq) => {
-                if self.val.is_none() || self.val2.is_none() {
-                    return Err(SqlQueryError::JsonbTextEqMissingArgs);
-                }
-                write!(out, " ->> $# = $#").unwrap();
-                binds.push(self.val.unwrap());
-                binds.push(self.val2.unwrap());
-            }
-            Some(SqlOp::Any | SqlOp::All) => {
-                write!(out, " {} ", self.op.as_ref().unwrap().as_ref()).unwrap();
-                write!(out, "($#)").unwrap();
-                if let Some(v) = self.val {
-                    binds.push(v);
-                }
-            }
-            Some(op) => {
-                write!(out, " {} ", op.as_ref()).unwrap();
-                Self::write_val(self.select, self.val, &self.val_fn, &mut out, &mut binds);
-            }
-            None if self.val.is_some() || self.val_fn.is_some() || self.select.is_some() => {
-                Self::write_val(self.select, self.val, &self.val_fn, &mut out, &mut binds);
-            }
-            None => {}
-        }
-
-        if let Some(right) = self.and {
-            let (right_sql, right_binds) = right.eval()?;
-            out.insert(0, '(');
-            write!(out, " AND {right_sql})").unwrap();
-            binds.extend(right_binds);
-        } else if let Some(right) = self.or {
-            let (right_sql, right_binds) = right.eval()?;
-            out.insert(0, '(');
-            write!(out, " OR {right_sql})").unwrap();
-            binds.extend(right_binds);
-        }
-
-        if self.negate {
-            out.insert_str(0, "NOT (");
-            out.push(')');
-        }
-
-        if self.then.is_some() != self.else_.is_some() {
-            return Err(SqlQueryError::CaseRequiresThenAndElse);
-        }
-
-        if let Some(then_expr) = self.then {
-            let (then_sql, then_binds) = then_expr.eval()?;
-            let (else_sql, else_binds) = self.else_.unwrap().eval()?;
-            let condition = out;
-            out = format!("CASE WHEN {condition} THEN {then_sql} ELSE {else_sql} END");
-            binds.extend(then_binds);
-            binds.extend(else_binds);
-        }
-
-        if let Some(alias) = &self.alias {
-            write!(out, " AS {}", alias).unwrap();
-        }
-
-        Ok((out, binds))
+        self.0.eval()
     }
 
-    fn write_val(
-        select: Option<SqlSelect>,
-        val: Option<SqlParam>,
-        val_fn: &Option<SqlFn>,
-        out: &mut String,
-        binds: &mut Vec<SqlParam>,
-    ) {
-        if let Some(select) = select {
-            let uq = SqlBase::build(select).expect("subquery build failed");
-            let (sub_sql, sub_binds) = uq.into_raw();
-            write!(out, "({})", sub_sql).unwrap();
-            binds.extend(sub_binds);
-            return;
-        }
-        match val_fn {
-            Some(f @ SqlFn::Now) => write!(out, "{}()", f.as_ref()),
-            Some(f @ (SqlFn::True | SqlFn::False)) => write!(out, "{}", f.as_ref()),
-            Some(f) => {
-                write!(out, "{}($#)", f.as_ref()).unwrap();
-                if let Some(v) = val {
-                    binds.push(v);
-                }
-                return;
-            }
-            None => {
-                write!(out, "$#").unwrap();
-                if let Some(v) = val {
-                    binds.push(v);
-                }
-                return;
+    /// Split into (column_name, value-only Expr) for INSERT column extraction.
+    pub(crate) fn into_col_and_val(self) -> (Option<String>, String, Vec<SqlParam>) {
+        let sql = self.0.buf;
+        let binds = self.0.binds;
+        // The buffer format for col = val is: "table".col_name = <rhs>
+        // Extract column name if the expression starts with a qualified column ref
+        if let Some(eq_pos) = sql.find(" = ") {
+            let col_part = &sql[..eq_pos];
+            // Extract bare column name after the last dot
+            if let Some(dot_pos) = col_part.rfind('.') {
+                let col_name = col_part[dot_pos + 1..].to_string();
+                let val_sql = sql[eq_pos + 3..].to_string();
+                return (Some(col_name), val_sql, binds);
             }
         }
-        .unwrap();
+        (None, sql, binds)
     }
 }
 
-/// SQL operators for comparisons, arithmetic, null checks, and JSON access.
-pub enum SqlOp {
-    Eq,
-    Neq,
-    Gt,
-    Gte,
-    Lt,
-    Lte,
-    In,
-    NotIn,
-    Like,
-    ILike,
-    Between,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    IsNull,
-    IsNotNull,
-    Exists,
-    NotExists,
-    Any,
-    All,
-    JsonGet,
-    JsonGetText,
-    JsonGetTextEq,
-    JsonPath,
-    JsonPathText,
-}
-
-/// SQL functions that can be applied to columns or values.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, strum::AsRefStr)]
-#[strum(serialize_all = "UPPERCASE")]
-pub enum SqlFn {
-    Count,
-    Sum,
-    Avg,
-    Min,
-    Max,
-    Now,
-    Lower,
-    Upper,
-    Coalesce,
-    Concat,
-    Substring,
-    Length,
-    Trim,
-    True,
-    False,
-}
-
-impl AsRef<str> for SqlOp {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Eq => "=",
-            Self::Neq => "!=",
-            Self::Gt => ">",
-            Self::Gte => ">=",
-            Self::Lt => "<",
-            Self::Lte => "<=",
-            Self::In => "IN",
-            Self::NotIn => "NOT IN",
-            Self::Like => "LIKE",
-            Self::ILike => "ILIKE",
-            Self::Between => "BETWEEN",
-            Self::Add => "+",
-            Self::Sub => "-",
-            Self::Mul => "*",
-            Self::Div => "/",
-            Self::IsNull => "IS NULL",
-            Self::IsNotNull => "IS NOT NULL",
-            Self::Exists => "EXISTS",
-            Self::NotExists => "NOT EXISTS",
-            Self::Any => "= ANY",
-            Self::All => "= ALL",
-            Self::JsonGet => "->",
-            Self::JsonGetText => "->>",
-            Self::JsonGetTextEq => "->>",
-            Self::JsonPath => "#>",
-            Self::JsonPathText => "#>>",
-        }
+impl<T: Table> From<SqlParam> for Expr<T> {
+    fn from(val: SqlParam) -> Self {
+        Self::new().val(val)
     }
 }
+
+impl<T: Table> From<ExprCol<T>> for Expr<T> {
+    fn from(col: ExprCol<T>) -> Self {
+        Expr(col.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExprCol<T> — after a column reference
+// ---------------------------------------------------------------------------
+
+/// After-column state. Reached via `.column()` or `Col::col()`.
+///
+/// Exposes operators (`.eq()`, `.add()`, ...), function wraps (`.count()`, `.lower()`, ...),
+/// null checks, and `.alias()`. Also available: `.cast()`, `.coalesce()`, `.wrap_raw()`.
+pub struct ExprCol<T: Table>(ExprBuf<T>);
+
+impl<T: Table> ExprCol<T> {
+    // -- comparison operators ------------------------------------------------
+
+    pub fn eq(mut self) -> ExprOp<T> {
+        self.0.push(" = ");
+        ExprOp(self.0)
+    }
+
+    pub fn neq(mut self) -> ExprOp<T> {
+        self.0.push(" != ");
+        ExprOp(self.0)
+    }
+
+    pub fn gt(mut self) -> ExprOp<T> {
+        self.0.push(" > ");
+        ExprOp(self.0)
+    }
+
+    pub fn gte(mut self) -> ExprOp<T> {
+        self.0.push(" >= ");
+        ExprOp(self.0)
+    }
+
+    pub fn lt(mut self) -> ExprOp<T> {
+        self.0.push(" < ");
+        ExprOp(self.0)
+    }
+
+    pub fn lte(mut self) -> ExprOp<T> {
+        self.0.push(" <= ");
+        ExprOp(self.0)
+    }
+
+    // -- arithmetic operators ------------------------------------------------
+
+    pub fn add(mut self) -> ExprOp<T> {
+        self.0.push(" + ");
+        ExprOp(self.0)
+    }
+
+    pub fn sub(mut self) -> ExprOp<T> {
+        self.0.push(" - ");
+        ExprOp(self.0)
+    }
+
+    pub fn mul(mut self) -> ExprOp<T> {
+        self.0.push(" * ");
+        ExprOp(self.0)
+    }
+
+    pub fn div(mut self) -> ExprOp<T> {
+        self.0.push(" / ");
+        ExprOp(self.0)
+    }
+
+    // -- set operators -------------------------------------------------------
+
+    pub fn in_(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" IN (");
+        self.0.push_val(v);
+        self.0.push(")");
+        Expr(self.0)
+    }
+
+    pub fn not_in(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" NOT IN (");
+        self.0.push_val(v);
+        self.0.push(")");
+        Expr(self.0)
+    }
+
+    // -- any / all -----------------------------------------------------------
+
+    pub fn any(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" = ANY(");
+        self.0.push_val(v);
+        self.0.push(")");
+        Expr(self.0)
+    }
+
+    pub fn all(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" = ALL(");
+        self.0.push_val(v);
+        self.0.push(")");
+        Expr(self.0)
+    }
+
+    // -- subquery set ops ----------------------------------------------------
+
+    pub fn in_select(mut self, q: SqlSelect) -> Expr<T> {
+        self.0.push(" IN ");
+        let uq = SqlBase::build(q).expect("subquery build failed");
+        let (sub_sql, sub_binds) = uq.into_raw();
+        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.binds.extend(sub_binds);
+        Expr(self.0)
+    }
+
+    pub fn not_in_select(mut self, q: SqlSelect) -> Expr<T> {
+        self.0.push(" NOT IN ");
+        let uq = SqlBase::build(q).expect("subquery build failed");
+        let (sub_sql, sub_binds) = uq.into_raw();
+        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.binds.extend(sub_binds);
+        Expr(self.0)
+    }
+
+    // -- pattern matching ----------------------------------------------------
+
+    pub fn like(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" LIKE ");
+        self.0.push_val(v);
+        Expr(self.0)
+    }
+
+    pub fn ilike(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" ILIKE ");
+        self.0.push_val(v);
+        Expr(self.0)
+    }
+
+    // -- null checks ---------------------------------------------------------
+
+    pub fn is_null(mut self) -> Expr<T> {
+        self.0.push(" IS NULL");
+        Expr(self.0)
+    }
+
+    pub fn is_not_null(mut self) -> Expr<T> {
+        self.0.push(" IS NOT NULL");
+        Expr(self.0)
+    }
+
+    // -- range ---------------------------------------------------------------
+
+    pub fn between(mut self, lo: impl Into<SqlParam>, hi: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" BETWEEN ");
+        self.0.push_val(lo);
+        self.0.push(" AND ");
+        self.0.push_val(hi);
+        Expr(self.0)
+    }
+
+    // -- aggregate / scalar wraps -------------------------------------------
+
+    pub fn count(mut self) -> Self {
+        self.0.wrap_fn("COUNT");
+        self
+    }
+
+    pub fn sum(mut self) -> Self {
+        self.0.wrap_fn("SUM");
+        self
+    }
+
+    pub fn avg(mut self) -> Self {
+        self.0.wrap_fn("AVG");
+        self
+    }
+
+    pub fn min(mut self) -> Self {
+        self.0.wrap_fn("MIN");
+        self
+    }
+
+    pub fn max(mut self) -> Self {
+        self.0.wrap_fn("MAX");
+        self
+    }
+
+    pub fn lower(mut self) -> Self {
+        self.0.wrap_fn("LOWER");
+        self
+    }
+
+    pub fn upper(mut self) -> Self {
+        self.0.wrap_fn("UPPER");
+        self
+    }
+
+    // -- json ----------------------------------------------------------------
+
+    pub fn json_get(mut self, key: impl Into<SqlParam>) -> ExprCol<T> {
+        self.0.push(" -> ");
+        self.0.push_val(key);
+        self
+    }
+
+    pub fn json_get_text(mut self, key: impl Into<SqlParam>) -> ExprCol<T> {
+        self.0.push(" ->> ");
+        self.0.push_val(key);
+        self
+    }
+
+    /// `col ->> key = val` JSONB text equality.
+    pub fn jsonb_text_eq(mut self, key: impl Into<SqlParam>, val: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push(" ->> ");
+        self.0.push_val(key);
+        self.0.push(" = ");
+        self.0.push_val(val);
+        Expr(self.0)
+    }
+
+    /// `col #> path` JSON path get.
+    pub fn json_path(mut self, path: impl Into<SqlParam>) -> ExprCol<T> {
+        self.0.push(" #> ");
+        self.0.push_val(path);
+        self
+    }
+
+    /// `col #>> path` JSON path get as text.
+    pub fn json_path_text(mut self, path: impl Into<SqlParam>) -> ExprCol<T> {
+        self.0.push(" #>> ");
+        self.0.push_val(path);
+        self
+    }
+
+    // -- coalesce ------------------------------------------------------------
+
+    /// Wrap buffer: `COALESCE(buf, fallback)`.
+    pub fn coalesce(mut self, fallback: impl Into<SqlParam>) -> Self {
+        self.0.buf.insert_str(0, "COALESCE(");
+        self.0.push(", ");
+        self.0.push_val(fallback);
+        self.0.push(")");
+        self
+    }
+
+    // -- string functions ----------------------------------------------------
+
+    pub fn concat(mut self) -> Self {
+        self.0.wrap_fn("CONCAT");
+        self
+    }
+
+    pub fn length(mut self) -> Self {
+        self.0.wrap_fn("LENGTH");
+        self
+    }
+
+    pub fn trim(mut self) -> Self {
+        self.0.wrap_fn("TRIM");
+        self
+    }
+
+    pub fn substring(mut self) -> Self {
+        self.0.wrap_fn("SUBSTRING");
+        self
+    }
+
+    // -- cast / wrap ---------------------------------------------------------
+
+    /// Append a type cast: `::ty`.
+    pub fn cast(mut self, ty: &str) -> Self {
+        write!(self.0.buf, "::{}", ty).unwrap();
+        self
+    }
+
+    /// Wrap the buffer with an arbitrary function: `name(buf)`.
+    /// Escape hatch for functions not yet supported as dedicated methods.
+    pub fn wrap_raw(mut self, name: &str) -> Self {
+        self.0.buf.insert(0, '(');
+        self.0.buf.insert_str(0, name);
+        self.0.push(")");
+        self
+    }
+
+    // -- alias ---------------------------------------------------------------
+
+    pub fn alias(mut self, name: &str) -> Expr<T> {
+        write!(self.0.buf, " AS {}", name).unwrap();
+        Expr(self.0)
+    }
+
+    // -- eval ----------------------------------------------------------------
+
+    pub fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
+        self.0.eval()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExprOp<T> — after an operator, expecting a value / column / subquery
+// ---------------------------------------------------------------------------
+
+/// After-operator state. Reached after `.eq()`, `.add()`, `.gt()`, etc.
+///
+/// Exposes value-side methods: `.column()`, `.val()`, `.now()`, `.null()`, `.raw()`,
+/// `.select()` (subquery), and `.if_()` (CASE WHEN).
+pub struct ExprOp<T: Table>(ExprBuf<T>);
+
+impl<T: Table> ExprOp<T> {
+    /// Append a qualified column reference.
+    pub fn column(mut self, col: T::Col) -> ExprCol<T> {
+        self.0.push_col(col);
+        ExprCol(self.0)
+    }
+
+    /// Append a bound parameter placeholder.
+    pub fn val(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+        self.0.push_val(v);
+        Expr(self.0)
+    }
+
+    /// Append `NOW()`.
+    pub fn now(mut self) -> Expr<T> {
+        self.0.push("NOW()");
+        Expr(self.0)
+    }
+
+    /// Append `NULL`.
+    pub fn null(mut self) -> Expr<T> {
+        self.0.push("NULL");
+        Expr(self.0)
+    }
+
+    /// Append raw SQL verbatim.
+    pub fn raw(mut self, s: &str) -> Expr<T> {
+        self.0.push(s);
+        Expr(self.0)
+    }
+
+    /// Append a parenthesised subquery.
+    pub fn select(mut self, q: SqlSelect) -> Expr<T> {
+        let uq = SqlBase::build(q).expect("subquery build failed");
+        let (sub_sql, sub_binds) = uq.into_raw();
+        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.binds.extend(sub_binds);
+        Expr(self.0)
+    }
+
+    /// Begin a `CASE WHEN <condition> …` block.
+    pub fn if_(mut self, condition: Expr<T>) -> ExprIf<T> {
+        let (cond_sql, cond_binds) = condition.0.eval().unwrap();
+        self.0.push("CASE WHEN ");
+        self.0.push(&cond_sql);
+        self.0.binds.extend(cond_binds);
+        ExprIf(self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExprIf<T> / ExprThen<T> — CASE WHEN typestate
+// ---------------------------------------------------------------------------
+
+/// CASE WHEN typestate. Reached via `.if_(condition)`. Must call `.then_()` next.
+pub struct ExprIf<T: Table>(ExprBuf<T>);
+
+impl<T: Table> ExprIf<T> {
+    pub fn then_(mut self, val: impl Into<Expr<T>>) -> ExprThen<T> {
+        let expr: Expr<T> = val.into();
+        let (sql, binds) = expr.0.eval().unwrap();
+        self.0.push(" THEN ");
+        self.0.push(&sql);
+        self.0.binds.extend(binds);
+        ExprThen(self.0)
+    }
+}
+
+/// CASE THEN typestate. Reached via `.then_()`. Must call `.else_()` to complete.
+pub struct ExprThen<T: Table>(ExprBuf<T>);
+
+impl<T: Table> ExprThen<T> {
+    pub fn else_(mut self, val: impl Into<Expr<T>>) -> Expr<T> {
+        let expr: Expr<T> = val.into();
+        let (sql, binds) = expr.0.eval().unwrap();
+        self.0.push(" ELSE ");
+        self.0.push(&sql);
+        self.0.binds.extend(binds);
+        self.0.push(" END");
+        Expr(self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Enums used by the query builders (SELECT, UPDATE, etc.)
+// ---------------------------------------------------------------------------
 
 /// Sort directions for ORDER BY clauses.
 #[derive(strum::AsRefStr)]
@@ -511,11 +676,17 @@ pub enum SqlJoin {
     Cross,
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{SqlCols, define_id};
     use sqlx::FromRow;
+
+    // -- Test helpers --------------------------------------------------------
 
     define_id!(TestId);
 
@@ -524,6 +695,9 @@ mod tests {
         id: TestId,
         name: String,
         age: i32,
+        email: String,
+        data: String,
+        created_at: String,
     }
 
     impl Table for TestTable {
@@ -533,492 +707,537 @@ mod tests {
         const PRIMARY_KEY: &'static str = "id";
     }
 
-    type Expr = SqlExpr<TestTable>;
-    use TestTableCol as TC;
+    type TC = TestTableCol;
 
-    // --- col only ---
+    type E = Expr<TestTable>;
 
-    #[test]
-    fn col_only() {
-        let e = Expr::empty().col(TC::Name);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name"#);
+    fn eval(e: Expr<TestTable>) -> (String, Vec<SqlParam>) {
+        e.eval().unwrap()
     }
 
-    #[test]
-    fn col_only_different_columns() {
-        assert_eq!(Expr::empty().col(TC::Id).eval().unwrap().0, r#""test_table".id"#);
-        assert_eq!(Expr::empty().col(TC::Age).eval().unwrap().0, r#""test_table".age"#);
+    fn eval_col(e: ExprCol<TestTable>) -> (String, Vec<SqlParam>) {
+        e.eval().unwrap()
     }
 
-    // --- col + col_fn ---
+    // -- Basic column + val --------------------------------------------------
 
     #[test]
-    fn col_with_count() {
-        let e = Expr::empty().col(TC::Id).col_fn(SqlFn::Count);
-        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".id)"#);
-    }
-
-    #[test]
-    fn col_with_lower() {
-        let e = Expr::empty().col(TC::Name).col_fn(SqlFn::Lower);
-        assert_eq!(e.eval().unwrap().0, r#"LOWER("test_table".name)"#);
-    }
-
-    // --- col + alias ---
-
-    #[test]
-    fn col_with_alias() {
-        let e = Expr::empty().col(TC::Name).alias("full_name");
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name AS full_name"#);
-    }
-
-    // --- col + col_fn + alias ---
-
-    #[test]
-    fn col_fn_with_alias() {
-        let e = Expr::empty().col(TC::Id).col_fn(SqlFn::Count).alias("total");
-        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".id) AS total"#);
-    }
-
-    // --- col + op + val (base case) ---
-
-    #[test]
-    fn col_eq_val() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::Eq).val(SqlParam::String("alice".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = $#"#);
-    }
-
-    #[test]
-    fn col_neq_val() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::Neq).val(SqlParam::String("bob".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name != $#"#);
-    }
-
-    #[test]
-    fn col_in_val() {
-        let e = Expr::empty().col(TC::Id).op(SqlOp::In).val(SqlParam::I32(1));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".id IN $#"#);
-    }
-
-    #[test]
-    fn col_not_in_val() {
-        let e = Expr::empty().col(TC::Id).op(SqlOp::NotIn).val(SqlParam::I32(1));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".id NOT IN $#"#);
-    }
-
-    // --- math operators ---
-
-    #[test]
-    fn col_add_val() {
-        let e = Expr::empty().col(TC::Age).op(SqlOp::Add).val(SqlParam::I32(1));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age + $#"#);
-    }
-
-    #[test]
-    fn col_sub_val() {
-        let e = Expr::empty().col(TC::Age).op(SqlOp::Sub).val(SqlParam::I32(5));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age - $#"#);
-    }
-
-    #[test]
-    fn col_mul_val() {
-        let e = Expr::empty().col(TC::Age).op(SqlOp::Mul).val(SqlParam::I32(2));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age * $#"#);
-    }
-
-    #[test]
-    fn col_div_val() {
-        let e = Expr::empty().col(TC::Age).op(SqlOp::Div).val(SqlParam::I32(3));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".age / $#"#);
-    }
-
-    // --- IS NULL / IS NOT NULL ---
-
-    #[test]
-    fn col_is_null() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::IsNull);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name IS NULL"#);
-    }
-
-    #[test]
-    fn col_is_not_null() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::IsNotNull);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name IS NOT NULL"#);
-    }
-
-    #[test]
-    fn col_is_null_ignores_val() {
-        let e =
-            Expr::empty().col(TC::Name).op(SqlOp::IsNull).val(SqlParam::String("ignored".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name IS NULL"#);
-    }
-
-    // --- val_fn variants ---
-
-    #[test]
-    fn col_eq_val_fn_lower() {
-        let e = Expr::empty()
-            .col(TC::Name)
-            .op(SqlOp::Eq)
-            .val(SqlParam::String("alice".into()))
-            .val_fn(SqlFn::Lower);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = LOWER($#)"#);
-    }
-
-    #[test]
-    fn col_eq_val_fn_now() {
-        let e = Expr::empty()
-            .col(TC::Name)
-            .op(SqlOp::Eq)
-            .val(SqlParam::String("placeholder".into()))
-            .val_fn(SqlFn::Now);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = NOW()"#);
-    }
-
-    #[test]
-    fn col_eq_val_fn_true() {
-        let e =
-            Expr::empty().col(TC::Name).op(SqlOp::Eq).val(SqlParam::Bool(true)).val_fn(SqlFn::True);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = TRUE"#);
-    }
-
-    #[test]
-    fn col_eq_val_fn_false() {
-        let e = Expr::empty()
-            .col(TC::Name)
-            .op(SqlOp::Eq)
-            .val(SqlParam::Bool(false))
-            .val_fn(SqlFn::False);
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name = FALSE"#);
-    }
-
-    #[test]
-    fn val_fn_only_no_col() {
-        let e = Expr::empty().val_fn(SqlFn::Now);
-        assert_eq!(e.eval().unwrap().0, "NOW()");
-    }
-
-    #[test]
-    fn val_fn_true_no_col() {
-        let e = Expr::empty().val_fn(SqlFn::True);
-        assert_eq!(e.eval().unwrap().0, "TRUE");
-    }
-
-    // --- col_fn + op + val combinations ---
-
-    #[test]
-    fn col_fn_count_eq_val() {
-        let e = Expr::empty().col(TC::Id).col_fn(SqlFn::Count).op(SqlOp::Eq).val(SqlParam::I32(10));
-        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".id) = $#"#);
-    }
-
-    #[test]
-    fn col_fn_lower_eq_val_fn_lower() {
-        let e = Expr::empty()
-            .col(TC::Name)
-            .col_fn(SqlFn::Lower)
-            .op(SqlOp::Eq)
-            .val(SqlParam::String("alice".into()))
-            .val_fn(SqlFn::Lower);
-        assert_eq!(e.eval().unwrap().0, r#"LOWER("test_table".name) = LOWER($#)"#);
-    }
-
-    // --- col_fn + op + val + alias ---
-
-    #[test]
-    fn full_chain_with_alias() {
-        let e = Expr::empty()
-            .col(TC::Age)
-            .col_fn(SqlFn::Count)
-            .op(SqlOp::Eq)
-            .val(SqlParam::I32(5))
-            .alias("age_count");
-        assert_eq!(e.eval().unwrap().0, r#"COUNT("test_table".age) = $# AS age_count"#);
-    }
-
-    // --- eq helper ---
-
-    #[test]
-    fn eq_helper() {
-        let (sql, binds) = Expr::eq(TC::Name, "alice").eval().unwrap();
+    fn column_eq_val() {
+        let (sql, binds) = eval(E::new().column(TC::Name).eq().val("alice"));
         assert_eq!(sql, r#""test_table".name = $#"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
     #[test]
-    fn eq_helper_with_i32() {
-        let (sql, binds) = Expr::eq(TC::Age, 42i32).eval().unwrap();
-        assert_eq!(sql, r#""test_table".age = $#"#);
-        assert_eq!(binds, vec![SqlParam::I32(42)]);
-    }
-
-    // --- edge cases ---
-
-    #[test]
-    fn no_fields_set() {
-        let e = Expr::empty();
-        assert_eq!(e.eval().unwrap().0, "");
-    }
-
-    #[test]
-    fn val_only_no_col_no_op() {
-        let e = Expr::empty().val(SqlParam::I32(42));
-        assert_eq!(e.eval().unwrap().0, "$#");
-    }
-
-    #[test]
-    fn alias_on_val_only() {
-        let e = Expr::empty().val(SqlParam::I32(1)).alias("constant");
-        assert_eq!(e.eval().unwrap().0, "$# AS constant");
-    }
-
-    #[test]
-    fn alias_on_val_fn_only() {
-        let e = Expr::empty().val_fn(SqlFn::Now).alias("current_time");
-        assert_eq!(e.eval().unwrap().0, "NOW() AS current_time");
-    }
-
-    #[test]
-    fn is_null_with_col_fn() {
-        let e = Expr::empty().col(TC::Name).col_fn(SqlFn::Lower).op(SqlOp::IsNull);
-        assert_eq!(e.eval().unwrap().0, r#"LOWER("test_table".name) IS NULL"#);
-    }
-
-    #[test]
-    fn is_not_null_with_alias() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::IsNotNull).alias("check");
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name IS NOT NULL AS check"#);
-    }
-
-    #[test]
-    fn err_and_or_both_set() {
-        let e = Expr::eq(TC::Name, "a").and(Expr::eq(TC::Age, 1i32)).or(Expr::eq(TC::Age, 2i32));
-        assert!(matches!(e.eval(), Err(SqlQueryError::AndOrBothSet)));
-    }
-
-    #[test]
-    fn err_between_missing_bounds() {
-        let e = Expr::empty().col(TC::Age).op(SqlOp::Between).val(SqlParam::I32(1));
-        assert!(matches!(e.eval(), Err(SqlQueryError::BetweenMissingBounds)));
-    }
-
-    #[test]
-    fn err_between_missing_both() {
-        let e = Expr::empty().col(TC::Age).op(SqlOp::Between);
-        assert!(matches!(e.eval(), Err(SqlQueryError::BetweenMissingBounds)));
-    }
-
-    #[test]
-    fn err_exists_missing_select() {
-        let e = Expr::empty().op(SqlOp::Exists);
-        assert!(matches!(e.eval(), Err(SqlQueryError::ExistsMissingSelect)));
-    }
-
-    #[test]
-    fn not_simple() {
-        let e = Expr::eq(TC::Name, "alice").not();
-        assert_eq!(e.eval().unwrap().0, r#"NOT ("test_table".name = $#)"#);
-    }
-
-    #[test]
-    fn not_with_or() {
-        let e = Expr::eq(TC::Name, "alice").or(Expr::eq(TC::Name, "bob")).not();
-        assert_eq!(
-            e.eval().unwrap().0,
-            r#"NOT (("test_table".name = $# OR "test_table".name = $#))"#,
-        );
-    }
-
-    #[test]
-    fn not_with_and() {
-        let e = Expr::eq(TC::Name, "alice").and(Expr::eq(TC::Age, 30i32)).not();
-        assert_eq!(
-            e.eval().unwrap().0,
-            r#"NOT (("test_table".name = $# AND "test_table".age = $#))"#,
-        );
-    }
-
-    #[test]
-    fn not_is_null() {
-        let e = Expr::is_null(TC::Name).not();
-        assert_eq!(e.eval().unwrap().0, r#"NOT ("test_table".name IS NULL)"#);
-    }
-
-    #[test]
-    fn not_with_alias() {
-        let e = Expr::eq(TC::Name, "alice").not().alias("excluded");
-        assert_eq!(e.eval().unwrap().0, r#"NOT ("test_table".name = $#) AS excluded"#);
-    }
-
-    #[test]
-    fn case_when_then_else() {
-        let (sql, binds) = Expr::eq(TC::Age, 18i32)
-            .then(Expr::empty().val(SqlParam::String("minor".into())))
-            .else_(Expr::empty().val(SqlParam::String("adult".into())))
-            .eval()
-            .unwrap();
-        assert_eq!(sql, r#"CASE WHEN "test_table".age = $# THEN $# ELSE $# END"#);
-        assert_eq!(
-            binds,
-            vec![
-                SqlParam::I32(18),
-                SqlParam::String("minor".into()),
-                SqlParam::String("adult".into()),
-            ],
-        );
-    }
-
-    #[test]
-    fn case_when_then_else_with_alias() {
-        let (sql, _) = Expr::eq(TC::Age, 18i32)
-            .then(Expr::empty().val(SqlParam::String("minor".into())))
-            .else_(Expr::empty().val(SqlParam::String("adult".into())))
-            .alias("age_group")
-            .eval()
-            .unwrap();
-        assert_eq!(sql, r#"CASE WHEN "test_table".age = $# THEN $# ELSE $# END AS age_group"#);
-    }
-
-    #[test]
-    fn json_get() {
-        let e = Expr::empty().col(TC::Name).op(SqlOp::JsonGet).val(SqlParam::String("key".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name -> $#"#);
-    }
-
-    #[test]
-    fn json_get_text() {
-        let e =
-            Expr::empty().col(TC::Name).op(SqlOp::JsonGetText).val(SqlParam::String("key".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name ->> $#"#);
-    }
-
-    #[test]
-    fn json_path() {
-        let e =
-            Expr::empty().col(TC::Name).op(SqlOp::JsonPath).val(SqlParam::String("{a,b}".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name #> $#"#);
-    }
-
-    #[test]
-    fn json_path_text() {
-        let e = Expr::empty()
-            .col(TC::Name)
-            .op(SqlOp::JsonPathText)
-            .val(SqlParam::String("{a,b}".into()));
-        assert_eq!(e.eval().unwrap().0, r#""test_table".name #>> $#"#);
-    }
-
-    #[test]
-    fn err_then_without_else() {
-        let e = Expr::eq(TC::Age, 18i32).then(Expr::empty().val(SqlParam::String("minor".into())));
-        assert!(matches!(e.eval(), Err(SqlQueryError::CaseRequiresThenAndElse)));
-    }
-
-    #[test]
-    fn err_else_without_then() {
-        let e = Expr::eq(TC::Age, 18i32).else_(Expr::empty().val(SqlParam::String("adult".into())));
-        assert!(matches!(e.eval(), Err(SqlQueryError::CaseRequiresThenAndElse)));
-    }
-
-    // --- Col helper methods ---
-
-    #[test]
-    fn col_helper_eq() {
-        let (sql, binds) = TC::Name.eq("alice").eval().unwrap();
-        assert_eq!(sql, r#""test_table".name = $#"#);
-        assert_eq!(binds, vec![SqlParam::String("alice".into())]);
-    }
-
-    #[test]
-    fn col_helper_neq() {
-        let (sql, _) = TC::Name.neq("bob").eval().unwrap();
+    fn column_neq_val() {
+        let (sql, _) = eval(E::new().column(TC::Name).neq().val("bob"));
         assert_eq!(sql, r#""test_table".name != $#"#);
     }
 
     #[test]
-    fn col_helper_gt_lt() {
-        assert_eq!(TC::Age.gt(10i32).eval().unwrap().0, r#""test_table".age > $#"#);
-        assert_eq!(TC::Age.lt(10i32).eval().unwrap().0, r#""test_table".age < $#"#);
-        assert_eq!(TC::Age.gte(10i32).eval().unwrap().0, r#""test_table".age >= $#"#);
-        assert_eq!(TC::Age.lte(10i32).eval().unwrap().0, r#""test_table".age <= $#"#);
+    fn column_gt_val() {
+        let (sql, _) = eval(E::new().column(TC::Age).gt().val(SqlParam::I32(18)));
+        assert_eq!(sql, r#""test_table".age > $#"#);
     }
 
     #[test]
-    fn col_helper_is_null() {
-        assert_eq!(TC::Name.is_null().eval().unwrap().0, r#""test_table".name IS NULL"#);
-        assert_eq!(TC::Name.is_not_null().eval().unwrap().0, r#""test_table".name IS NOT NULL"#);
+    fn column_gte_val() {
+        let (sql, _) = eval(E::new().column(TC::Age).gte().val(SqlParam::I32(18)));
+        assert_eq!(sql, r#""test_table".age >= $#"#);
     }
 
     #[test]
-    fn col_helper_like_ilike() {
-        assert_eq!(TC::Name.like("%alice%").eval().unwrap().0, r#""test_table".name LIKE $#"#);
-        assert_eq!(TC::Name.ilike("%alice%").eval().unwrap().0, r#""test_table".name ILIKE $#"#);
+    fn column_lt_val() {
+        let (sql, _) = eval(E::new().column(TC::Age).lt().val(SqlParam::I32(18)));
+        assert_eq!(sql, r#""test_table".age < $#"#);
     }
 
     #[test]
-    fn col_helper_in_not_in() {
-        assert_eq!(TC::Age.in_(SqlParam::I32(1)).eval().unwrap().0, r#""test_table".age IN $#"#);
-        assert_eq!(
-            TC::Age.not_in(SqlParam::I32(1)).eval().unwrap().0,
-            r#""test_table".age NOT IN $#"#
-        );
+    fn column_lte_val() {
+        let (sql, _) = eval(E::new().column(TC::Age).lte().val(SqlParam::I32(18)));
+        assert_eq!(sql, r#""test_table".age <= $#"#);
+    }
+
+    // -- Self-referential arithmetic -----------------------------------------
+
+    #[test]
+    fn self_ref_add() {
+        let (sql, binds) =
+            eval(E::new().column(TC::Age).eq().column(TC::Age).add().val(SqlParam::I32(1)));
+        assert_eq!(sql, r#""test_table".age = "test_table".age + $#"#);
+        assert_eq!(binds, vec![SqlParam::I32(1)]);
     }
 
     #[test]
-    fn col_helper_between() {
-        let (sql, binds) = TC::Age.between(18i32, 65i32).eval().unwrap();
+    fn self_ref_sub() {
+        let (sql, _) =
+            eval(E::new().column(TC::Age).eq().column(TC::Age).sub().val(SqlParam::I32(5)));
+        assert_eq!(sql, r#""test_table".age = "test_table".age - $#"#);
+    }
+
+    #[test]
+    fn self_ref_mul() {
+        let (sql, _) =
+            eval(E::new().column(TC::Age).eq().column(TC::Age).mul().val(SqlParam::I32(2)));
+        assert_eq!(sql, r#""test_table".age = "test_table".age * $#"#);
+    }
+
+    #[test]
+    fn self_ref_div() {
+        let (sql, _) =
+            eval(E::new().column(TC::Age).eq().column(TC::Age).div().val(SqlParam::I32(3)));
+        assert_eq!(sql, r#""test_table".age = "test_table".age / $#"#);
+    }
+
+    // -- NOW / NULL / TRUE / FALSE -------------------------------------------
+
+    #[test]
+    fn eq_now() {
+        let (sql, binds) = eval(E::new().column(TC::CreatedAt).eq().now());
+        assert_eq!(sql, r#""test_table".created_at = NOW()"#);
+        assert!(binds.is_empty());
+    }
+
+    #[test]
+    fn eq_null() {
+        let (sql, _) = eval(E::new().column(TC::Email).eq().null());
+        assert_eq!(sql, r#""test_table".email = NULL"#);
+    }
+
+    #[test]
+    fn val_true() {
+        let (sql, _) = eval(E::new().true_());
+        assert_eq!(sql, "TRUE");
+    }
+
+    #[test]
+    fn val_false() {
+        let (sql, _) = eval(E::new().false_());
+        assert_eq!(sql, "FALSE");
+    }
+
+    // -- Null checks ---------------------------------------------------------
+
+    #[test]
+    fn is_null() {
+        let (sql, _) = eval(E::new().column(TC::Email).is_null());
+        assert_eq!(sql, r#""test_table".email IS NULL"#);
+    }
+
+    #[test]
+    fn is_not_null() {
+        let (sql, _) = eval(E::new().column(TC::Email).is_not_null());
+        assert_eq!(sql, r#""test_table".email IS NOT NULL"#);
+    }
+
+    // -- IN / NOT IN ---------------------------------------------------------
+
+    #[test]
+    fn in_array() {
+        let (sql, binds) = eval(E::new().column(TC::Age).in_(SqlParam::I32Array(vec![1, 2, 3])));
+        assert_eq!(sql, r#""test_table".age IN ($#)"#);
+        assert_eq!(binds, vec![SqlParam::I32Array(vec![1, 2, 3])]);
+    }
+
+    #[test]
+    fn not_in_array() {
+        let (sql, _) = eval(E::new().column(TC::Age).not_in(SqlParam::I32Array(vec![1])));
+        assert_eq!(sql, r#""test_table".age NOT IN ($#)"#);
+    }
+
+    // -- LIKE / ILIKE --------------------------------------------------------
+
+    #[test]
+    fn like_pattern() {
+        let (sql, _) = eval(E::new().column(TC::Name).like("%alice%"));
+        assert_eq!(sql, r#""test_table".name LIKE $#"#);
+    }
+
+    #[test]
+    fn ilike_pattern() {
+        let (sql, _) = eval(E::new().column(TC::Name).ilike("%alice%"));
+        assert_eq!(sql, r#""test_table".name ILIKE $#"#);
+    }
+
+    // -- BETWEEN -------------------------------------------------------------
+
+    #[test]
+    fn between_range() {
+        let (sql, binds) =
+            eval(E::new().column(TC::Age).between(SqlParam::I32(10), SqlParam::I32(20)));
         assert_eq!(sql, r#""test_table".age BETWEEN $# AND $#"#);
-        assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I32(65)]);
+        assert_eq!(binds, vec![SqlParam::I32(10), SqlParam::I32(20)]);
+    }
+
+    // -- Aggregate wraps -----------------------------------------------------
+
+    #[test]
+    fn count_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Age).count());
+        assert_eq!(sql, r#"COUNT("test_table".age)"#);
     }
 
     #[test]
-    fn col_helper_count() {
-        assert_eq!(TC::Id.count().eval().unwrap().0, r#"COUNT("test_table".id)"#);
+    fn sum_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Age).sum());
+        assert_eq!(sql, r#"SUM("test_table".age)"#);
     }
 
     #[test]
-    fn col_helper_aggregates() {
-        assert_eq!(TC::Age.sum().eval().unwrap().0, r#"SUM("test_table".age)"#);
-        assert_eq!(TC::Age.avg().eval().unwrap().0, r#"AVG("test_table".age)"#);
-        assert_eq!(TC::Age.min().eval().unwrap().0, r#"MIN("test_table".age)"#);
-        assert_eq!(TC::Age.max().eval().unwrap().0, r#"MAX("test_table".age)"#);
+    fn avg_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Age).avg());
+        assert_eq!(sql, r#"AVG("test_table".age)"#);
     }
 
     #[test]
-    fn col_helper_lower_upper() {
-        assert_eq!(TC::Name.lower().eval().unwrap().0, r#"LOWER("test_table".name)"#);
-        assert_eq!(TC::Name.upper().eval().unwrap().0, r#"UPPER("test_table".name)"#);
+    fn min_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Age).min());
+        assert_eq!(sql, r#"MIN("test_table".age)"#);
     }
 
     #[test]
-    fn col_helper_chaining() {
-        let e = TC::Name.eq("alice").and(TC::Age.gt(18i32));
-        assert_eq!(e.eval().unwrap().0, r#"("test_table".name = $# AND "test_table".age > $#)"#);
+    fn max_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Age).max());
+        assert_eq!(sql, r#"MAX("test_table".age)"#);
     }
+
+    #[test]
+    fn lower_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).lower());
+        assert_eq!(sql, r#"LOWER("test_table".name)"#);
+    }
+
+    #[test]
+    fn upper_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).upper());
+        assert_eq!(sql, r#"UPPER("test_table".name)"#);
+    }
+
+    // -- Alias ---------------------------------------------------------------
+
+    #[test]
+    fn column_alias() {
+        let (sql, _) = eval(E::new().column(TC::Name).alias("n"));
+        assert_eq!(sql, r#""test_table".name AS n"#);
+    }
+
+    // -- Raw -----------------------------------------------------------------
+
+    #[test]
+    fn raw_pass_through() {
+        let (sql, _) = eval(E::new().raw("1 = 1"));
+        assert_eq!(sql, "1 = 1");
+    }
+
+    // -- AND / OR / NOT ------------------------------------------------------
+
+    #[test]
+    fn and_chain() {
+        let (sql, _) = eval(
+            E::new()
+                .column(TC::Name)
+                .eq()
+                .val("alice")
+                .and()
+                .column(TC::Age)
+                .gt()
+                .val(SqlParam::I32(18)),
+        );
+        assert_eq!(sql, r#"("test_table".name = $#) AND "test_table".age > $#"#);
+    }
+
+    #[test]
+    fn or_chain() {
+        let (sql, _) =
+            eval(E::new().column(TC::Name).eq().val("alice").or().column(TC::Name).eq().val("bob"));
+        assert_eq!(sql, r#"("test_table".name = $#) OR "test_table".name = $#"#);
+    }
+
+    #[test]
+    fn and_bare_chain() {
+        let (sql, _) = eval(
+            E::new()
+                .column(TC::Name)
+                .eq()
+                .val("alice")
+                .and_bare()
+                .column(TC::Age)
+                .gt()
+                .val(SqlParam::I32(18)),
+        );
+        assert_eq!(sql, r#""test_table".name = $# AND "test_table".age > $#"#);
+    }
+
+    #[test]
+    fn or_bare_chain() {
+        let (sql, _) = eval(
+            E::new().column(TC::Name).eq().val("alice").or_bare().column(TC::Name).eq().val("bob"),
+        );
+        assert_eq!(sql, r#""test_table".name = $# OR "test_table".name = $#"#);
+    }
+
+    #[test]
+    fn not_expr() {
+        let (sql, _) = eval(E::new().column(TC::Email).is_null().not());
+        assert_eq!(sql, r#"NOT "test_table".email IS NULL"#);
+    }
+
+    // -- CASE WHEN / THEN / ELSE ---------------------------------------------
+
+    #[test]
+    fn if_then_else() {
+        let (sql, binds) = eval(
+            E::new()
+                .column(TC::Name)
+                .eq()
+                .if_(E::new().val(SqlParam::Bool(true)))
+                .then_(E::new().val(SqlParam::String("yes".into())))
+                .else_(E::new().null()),
+        );
+        assert_eq!(sql, r#""test_table".name = CASE WHEN $# THEN $# ELSE NULL END"#,);
+        assert_eq!(binds, vec![SqlParam::Bool(true), SqlParam::String("yes".into())],);
+    }
+
+    #[test]
+    fn if_then_else_with_column() {
+        // closed_at = CASE WHEN $1 THEN "t".acquired_at ELSE NULL END
+        let then_val: E = E::new().column(TC::CreatedAt).into();
+        let (sql, binds) = eval(
+            E::new()
+                .column(TC::CreatedAt)
+                .eq()
+                .if_(E::new().val(SqlParam::Bool(true)))
+                .then_(then_val)
+                .else_(E::new().null()),
+        );
+        assert_eq!(
+            sql,
+            r#""test_table".created_at = CASE WHEN $# THEN "test_table".created_at ELSE NULL END"#,
+        );
+        assert_eq!(binds, vec![SqlParam::Bool(true)]);
+    }
+
+    // -- JSON ----------------------------------------------------------------
+
+    #[test]
+    fn json_get_key() {
+        let (sql, _) = eval_col(E::new().column(TC::Data).json_get("key"));
+        assert_eq!(sql, r#""test_table".data -> $#"#);
+    }
+
+    #[test]
+    fn json_get_text_key() {
+        let (sql, _) = eval_col(E::new().column(TC::Data).json_get_text("key"));
+        assert_eq!(sql, r#""test_table".data ->> $#"#);
+    }
+
+    // -- ANY / ALL -----------------------------------------------------------
+
+    #[test]
+    fn any_val() {
+        let (sql, binds) = eval(E::new().column(TC::Age).any(SqlParam::I32Array(vec![1, 2])));
+        assert_eq!(sql, r#""test_table".age = ANY($#)"#);
+        assert_eq!(binds, vec![SqlParam::I32Array(vec![1, 2])]);
+    }
+
+    #[test]
+    fn all_val() {
+        let (sql, _) = eval(E::new().column(TC::Age).all(SqlParam::I32Array(vec![1])));
+        assert_eq!(sql, r#""test_table".age = ALL($#)"#);
+    }
+
+    // -- JSONB text eq / JSON path -------------------------------------------
 
     #[test]
     fn jsonb_text_eq() {
-        let (sql, binds) = Expr::jsonb_text_eq(TC::Name, "key", "value").eval().unwrap();
-        assert_eq!(sql, r#""test_table".name ->> $# = $#"#);
-        assert_eq!(binds, vec![SqlParam::String("key".into()), SqlParam::String("value".into())]);
+        let (sql, binds) = eval(E::new().column(TC::Data).jsonb_text_eq("key", "val"));
+        assert_eq!(sql, r#""test_table".data ->> $# = $#"#);
+        assert_eq!(binds, vec![SqlParam::String("key".into()), SqlParam::String("val".into())],);
     }
 
     #[test]
-    fn col_helper_jsonb_text_eq() {
-        let (sql, binds) = TC::Name.jsonb_text_eq("path", "expected").eval().unwrap();
-        assert_eq!(sql, r#""test_table".name ->> $# = $#"#);
-        assert_eq!(
-            binds,
-            vec![SqlParam::String("path".into()), SqlParam::String("expected".into())]
+    fn json_path() {
+        let (sql, _) = eval_col(E::new().column(TC::Data).json_path("{a,b}"));
+        assert_eq!(sql, r#""test_table".data #> $#"#);
+    }
+
+    #[test]
+    fn json_path_text() {
+        let (sql, _) = eval_col(E::new().column(TC::Data).json_path_text("{a,b}"));
+        assert_eq!(sql, r#""test_table".data #>> $#"#);
+    }
+
+    // -- COALESCE ------------------------------------------------------------
+
+    #[test]
+    fn coalesce_col() {
+        let (sql, binds) = eval_col(E::new().column(TC::Age).coalesce(SqlParam::I32(0)));
+        assert_eq!(sql, r#"COALESCE("test_table".age, $#)"#);
+        assert_eq!(binds, vec![SqlParam::I32(0)]);
+    }
+
+    // -- EXISTS / NOT EXISTS -------------------------------------------------
+
+    #[test]
+    fn exists_subquery() {
+        use crate::SqlSelect;
+        let sub = SqlSelect::new::<TestTable>();
+        let (sql, _) = eval(E::new().exists(sub));
+        assert!(sql.starts_with("EXISTS ("));
+    }
+
+    #[test]
+    fn not_exists_subquery() {
+        use crate::SqlSelect;
+        let sub = SqlSelect::new::<TestTable>();
+        let (sql, _) = eval(E::new().not_exists(sub));
+        assert!(sql.starts_with("NOT EXISTS ("));
+    }
+
+    // -- into_col_and_val ----------------------------------------------------
+
+    #[test]
+    fn into_col_and_val_splits() {
+        let e = E::new().column(TC::Name).eq().val("alice");
+        let (col, val_sql, binds) = e.into_col_and_val();
+        assert_eq!(col, Some("name".to_string()));
+        assert_eq!(val_sql, "$#");
+        assert_eq!(binds, vec![SqlParam::String("alice".into())]);
+    }
+
+    #[test]
+    fn into_col_and_val_no_col() {
+        let e = E::new().val(SqlParam::I32(1));
+        let (col, val_sql, binds) = e.into_col_and_val();
+        assert_eq!(col, None);
+        assert_eq!(val_sql, "$#");
+        assert_eq!(binds, vec![SqlParam::I32(1)]);
+    }
+
+    // -- CAST ----------------------------------------------------------------
+
+    #[test]
+    fn cast_on_expr() {
+        let (sql, _) = eval(E::new().val(SqlParam::I32(1)).cast("text"));
+        assert_eq!(sql, "$#::text");
+    }
+
+    #[test]
+    fn cast_on_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Age).cast("text"));
+        assert_eq!(sql, r#""test_table".age::text"#);
+    }
+
+    // -- PAREN ---------------------------------------------------------------
+
+    #[test]
+    fn paren_wrap() {
+        let (sql, _) = eval(
+            E::new()
+                .column(TC::Name)
+                .eq()
+                .val("a")
+                .or_bare()
+                .column(TC::Name)
+                .eq()
+                .val("b")
+                .paren(),
         );
+        assert_eq!(sql, r#"("test_table".name = $# OR "test_table".name = $#)"#);
+    }
+
+    // -- WRAP_RAW ------------------------------------------------------------
+
+    #[test]
+    fn wrap_raw_on_expr() {
+        let (sql, _) = eval(E::new().val(SqlParam::I32(1)).wrap_raw("MY_FUNC"));
+        assert_eq!(sql, "MY_FUNC($#)");
     }
 
     #[test]
-    fn err_jsonb_text_eq_missing_args() {
-        let e = Expr::empty()
-            .col(TC::Name)
-            .op(SqlOp::JsonGetTextEq)
-            .val(SqlParam::String("key".into()));
-        assert!(matches!(e.eval(), Err(SqlQueryError::JsonbTextEqMissingArgs)));
+    fn wrap_raw_on_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).wrap_raw("UNACCENT"));
+        assert_eq!(sql, r#"UNACCENT("test_table".name)"#);
+    }
+
+    // -- String functions ----------------------------------------------------
+
+    #[test]
+    fn concat_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).concat());
+        assert_eq!(sql, r#"CONCAT("test_table".name)"#);
+    }
+
+    #[test]
+    fn length_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).length());
+        assert_eq!(sql, r#"LENGTH("test_table".name)"#);
+    }
+
+    #[test]
+    fn trim_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).trim());
+        assert_eq!(sql, r#"TRIM("test_table".name)"#);
+    }
+
+    #[test]
+    fn substring_col() {
+        let (sql, _) = eval_col(E::new().column(TC::Name).substring());
+        assert_eq!(sql, r#"SUBSTRING("test_table".name)"#);
+    }
+
+    // -- GREATEST / LEAST ----------------------------------------------------
+
+    #[test]
+    fn greatest_two_vals() {
+        let (sql, binds) =
+            eval(E::greatest(E::new().val(SqlParam::I32(1)), E::new().val(SqlParam::I32(2))));
+        assert_eq!(sql, "GREATEST($#, $#)");
+        assert_eq!(binds, vec![SqlParam::I32(1), SqlParam::I32(2)]);
+    }
+
+    #[test]
+    fn greatest_val_and_col() {
+        let col: E = E::new().column(TC::CreatedAt).into();
+        let (sql, binds) = eval(E::greatest(E::new().val(SqlParam::String("ts".into())), col));
+        assert_eq!(sql, r#"GREATEST($#, "test_table".created_at)"#);
+        assert_eq!(binds, vec![SqlParam::String("ts".into())]);
+    }
+
+    #[test]
+    fn least_two_vals() {
+        let (sql, binds) =
+            eval(E::least(E::new().val(SqlParam::I32(10)), E::new().val(SqlParam::I32(20))));
+        assert_eq!(sql, "LEAST($#, $#)");
+        assert_eq!(binds, vec![SqlParam::I32(10), SqlParam::I32(20)]);
+    }
+
+    #[test]
+    fn greatest_in_case_when() {
+        // closed_at = CASE WHEN $1 THEN GREATEST($2, "t".acquired_at) ELSE NULL END
+        let col: E = E::new().column(TC::CreatedAt).into();
+        let (sql, binds) = eval(
+            E::new()
+                .column(TC::CreatedAt)
+                .eq()
+                .if_(E::new().val(SqlParam::Bool(true)))
+                .then_(E::greatest(E::new().val(SqlParam::String("ts".into())), col))
+                .else_(E::new().null()),
+        );
+        assert_eq!(
+            sql,
+            r#""test_table".created_at = CASE WHEN $# THEN GREATEST($#, "test_table".created_at) ELSE NULL END"#,
+        );
+        assert_eq!(binds, vec![SqlParam::Bool(true), SqlParam::String("ts".into())],);
+    }
+
+    // -- From<SqlParam> ------------------------------------------------------
+
+    #[test]
+    fn from_sql_param() {
+        let e: E = SqlParam::I32(42).into();
+        let (sql, binds) = eval(e);
+        assert_eq!(sql, "$#");
+        assert_eq!(binds, vec![SqlParam::I32(42)]);
     }
 }

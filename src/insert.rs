@@ -5,7 +5,7 @@ use sqlx::QueryBuilder;
 use crate::{
     SqlBase,
     shared::{
-        Cte, Returning, SqlConflict, Table, UnbindedQuery, error::SqlQueryError, expr::SqlExpr,
+        Cte, Returning, SqlConflict, Table, UnbindedQuery, error::SqlQueryError, expr::Expr,
         prepend_ctes, push_returning, value::SqlParam,
     },
 };
@@ -39,7 +39,7 @@ impl<T: Table> SqlInsert<T> {
     /// Sets column-value pairs for a single-row insert.
     pub fn values(
         mut self,
-        exprs: impl IntoIterator<Item = SqlExpr<T>>,
+        exprs: impl IntoIterator<Item = Expr<T>>,
     ) -> Result<Self, SqlQueryError> {
         if !self.columns.is_empty() || !self.rows.is_empty() {
             return Err(SqlQueryError::InsertValuesAlreadySet);
@@ -53,7 +53,7 @@ impl<T: Table> SqlInsert<T> {
     /// Sets column-value pairs for a multi-row insert.
     pub fn values_nested(
         mut self,
-        rows: impl IntoIterator<Item = impl IntoIterator<Item = SqlExpr<T>>>,
+        rows: impl IntoIterator<Item = impl IntoIterator<Item = Expr<T>>>,
     ) -> Result<Self, SqlQueryError> {
         if !self.columns.is_empty() || !self.rows.is_empty() {
             return Err(SqlQueryError::InsertValuesAlreadySet);
@@ -71,16 +71,16 @@ impl<T: Table> SqlInsert<T> {
     }
 
     fn extract_row(
-        exprs: impl IntoIterator<Item = SqlExpr<T>>,
+        exprs: impl IntoIterator<Item = Expr<T>>,
     ) -> (Vec<String>, Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>) {
         let mut cols = vec![];
         let mut row = vec![];
         for expr in exprs {
-            let (col, val_expr) = expr.into_col_and_val();
+            let (col, val_sql, binds) = expr.into_col_and_val();
             if let Some(col) = col {
                 cols.push(col);
             }
-            row.push(val_expr.eval());
+            row.push(Ok((val_sql, binds)));
         }
         (cols, row)
     }
@@ -92,7 +92,7 @@ impl<T: Table> SqlInsert<T> {
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = SqlExpr<T>>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
@@ -192,8 +192,6 @@ mod tests {
         const PRIMARY_KEY: &'static str = "id";
     }
 
-    type UExpr = SqlExpr<Users>;
-
     fn build(insert: SqlInsert<Users>) -> (String, Vec<SqlParam>) {
         let uq = SqlBase::build(insert).unwrap();
         let bq = uq.bind();
@@ -204,7 +202,7 @@ mod tests {
     fn insert_single_row() {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
-                .values([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)])
+                .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
                 .unwrap(),
         );
         assert_eq!(sql, r#"INSERT INTO "users" (name, age) VALUES ($1, $2)"#);
@@ -216,8 +214,8 @@ mod tests {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values_nested([
-                    vec![UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)],
-                    vec![UExpr::eq(UsersCol::Name, "bob"), UExpr::eq(UsersCol::Age, 25i32)],
+                    vec![UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)],
+                    vec![UsersCol::Name.eq("bob"), UsersCol::Age.eq(25i32)],
                 ])
                 .unwrap(),
         );
@@ -236,10 +234,7 @@ mod tests {
     #[test]
     fn insert_with_returning() {
         let (sql, _) = build(
-            SqlInsert::<Users>::new()
-                .values([UExpr::eq(UsersCol::Name, "alice")])
-                .unwrap()
-                .returning_all(),
+            SqlInsert::<Users>::new().values([UsersCol::Name.eq("alice")]).unwrap().returning_all(),
         );
         assert_eq!(sql, r#"INSERT INTO "users" (name) VALUES ($1) RETURNING *"#);
     }
@@ -248,7 +243,7 @@ mod tests {
     fn insert_on_conflict_do_nothing() {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
-                .values([UExpr::eq(UsersCol::Name, "alice")])
+                .values([UsersCol::Name.eq("alice")])
                 .unwrap()
                 .on_conflict(SqlConflict::DoNothing),
         );
@@ -259,7 +254,7 @@ mod tests {
     fn insert_on_conflict_do_update() {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
-                .values([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)])
+                .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
                 .unwrap()
                 .on_conflict(SqlConflict::DoUpdate {
                     conflict_cols: vec![UsersCol::Name],
@@ -276,7 +271,7 @@ mod tests {
     fn insert_on_conflict_on_constraint() {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
-                .values([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)])
+                .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
                 .unwrap()
                 .on_conflict(SqlConflict::OnConstraint {
                     name: "users_name_key",
@@ -293,7 +288,7 @@ mod tests {
     fn insert_on_conflict_with_returning() {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
-                .values([UExpr::eq(UsersCol::Name, "alice"), UExpr::eq(UsersCol::Age, 30i32)])
+                .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
                 .unwrap()
                 .on_conflict(SqlConflict::DoUpdate {
                     conflict_cols: vec![UsersCol::Name],
@@ -311,18 +306,18 @@ mod tests {
     #[test]
     fn err_values_called_twice() {
         let result = SqlInsert::<Users>::new()
-            .values([UExpr::eq(UsersCol::Name, "alice")])
+            .values([UsersCol::Name.eq("alice")])
             .unwrap()
-            .values([UExpr::eq(UsersCol::Name, "bob")]);
+            .values([UsersCol::Name.eq("bob")]);
         assert!(matches!(result, Err(SqlQueryError::InsertValuesAlreadySet)));
     }
 
     #[test]
     fn err_values_nested_after_values() {
         let result = SqlInsert::<Users>::new()
-            .values([UExpr::eq(UsersCol::Name, "alice")])
+            .values([UsersCol::Name.eq("alice")])
             .unwrap()
-            .values_nested([vec![UExpr::eq(UsersCol::Name, "bob")]]);
+            .values_nested([vec![UsersCol::Name.eq("bob")]]);
         assert!(matches!(result, Err(SqlQueryError::InsertValuesAlreadySet)));
     }
 }

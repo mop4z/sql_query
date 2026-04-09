@@ -17,7 +17,7 @@ pub use select::SqlSelect;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
     error::SqlQueryError,
-    expr::{SqlExpr, SqlFn, SqlJoin, SqlOp, SqlOrder},
+    expr::{Expr, ExprCol, ExprOp, SqlJoin, SqlOrder},
     unbinded_query::{
         BoundQuery, BoundQueryAs, BoundQueryScalar, CachedBoundQueryAs, CachedBoundQueryScalar,
         UnbindedQuery,
@@ -86,7 +86,10 @@ impl SqlQ {
     where
         T::Col: SqlColId,
     {
-        Ok(Self::select::<T>().filter([SqlExpr::<T>::eq(T::Col::id(), id)]).build()?.bind_as::<T>())
+        Ok(Self::select::<T>()
+            .filter([Expr::<T>::new().column(T::Col::id()).eq().val(id)])
+            .build()?
+            .bind_as::<T>())
     }
 
     /// Builds a ```DELETE WHERE id = $1``` query for a single row by primary key.
@@ -94,7 +97,10 @@ impl SqlQ {
     where
         T::Col: SqlColId,
     {
-        Ok(Self::delete::<T>().filter([SqlExpr::<T>::eq(T::Col::id(), id)]).build()?.bind())
+        Ok(Self::delete::<T>()
+            .filter([Expr::<T>::new().column(T::Col::id()).eq().val(id)])
+            .build()?
+            .bind())
     }
 
     pub fn with(ctes: impl IntoIterator<Item = (&'static str, impl SqlBase)>) -> SqlWith {
