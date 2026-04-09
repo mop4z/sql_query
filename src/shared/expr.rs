@@ -637,10 +637,19 @@ impl<T: Table> EvalExpr for ExprCol<T> {
 pub struct ExprOp<T: Table>(ExprBuf<T>);
 
 impl<T: Table> ExprOp<T> {
-    /// Append a qualified column reference.
+    /// Append a qualified column reference from this table.
     pub fn column(mut self, col: T::Col) -> ExprCol<T> {
         self.0.push_col(col);
         ExprCol(self.0)
+    }
+
+    /// Append a qualified column reference from another table.
+    pub fn column_of<U: Table>(mut self, col: U::Col) -> Expr<T> {
+        self.0.buf.push('"');
+        self.0.buf.push_str(U::TABLE_NAME);
+        self.0.buf.push_str("\".");
+        self.0.buf.push_str(col.as_ref());
+        Expr(self.0)
     }
 
     /// Append a bound parameter placeholder.
