@@ -1,5 +1,8 @@
 use std::{fmt::Write, marker::PhantomData};
 
+use compact_str::CompactString;
+use smallvec::SmallVec;
+
 use crate::{
     SqlBase,
     select::SqlSelect,
@@ -23,14 +26,14 @@ pub trait EvalExpr {
 // ---------------------------------------------------------------------------
 
 struct ExprBuf<T: Table> {
-    buf: String,
-    binds: Vec<SqlParam>,
+    buf: CompactString,
+    binds: SmallVec<[SqlParam; 2]>,
     _t: PhantomData<T>,
 }
 
 impl<T: Table> ExprBuf<T> {
     fn new() -> Self {
-        Self { buf: String::new(), binds: Vec::new(), _t: PhantomData }
+        Self { buf: CompactString::default(), binds: SmallVec::new(), _t: PhantomData }
     }
 
     fn push(&mut self, s: &str) {
@@ -47,13 +50,16 @@ impl<T: Table> ExprBuf<T> {
     }
 
     fn wrap_fn(&mut self, name: &str) {
-        self.buf.insert_str(0, "(");
-        self.buf.insert_str(0, name);
-        self.buf.push(')');
+        let mut new_buf = CompactString::with_capacity(name.len() + 1 + self.buf.len() + 1);
+        new_buf.push_str(name);
+        new_buf.push('(');
+        new_buf.push_str(&self.buf);
+        new_buf.push(')');
+        self.buf = new_buf;
     }
 
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
-        Ok((self.buf, self.binds))
+        Ok((self.buf.into(), self.binds.into_vec()))
     }
 }
 
@@ -250,12 +256,12 @@ impl<T: Table> Expr<T> {
             let col_part = &sql[..eq_pos];
             // Extract bare column name after the last dot
             if let Some(dot_pos) = col_part.rfind('.') {
-                let col_name = col_part[dot_pos + 1..].to_string();
-                let val_sql = sql[eq_pos + 3..].to_string();
-                return (Some(col_name), val_sql, binds);
+                let col_name: String = col_part[dot_pos + 1..].into();
+                let val_sql: String = sql[eq_pos + 3..].into();
+                return (Some(col_name), val_sql, binds.into_vec());
             }
         }
-        (None, sql, binds)
+        (None, sql.into(), binds.into_vec())
     }
 }
 
