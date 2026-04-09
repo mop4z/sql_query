@@ -40,8 +40,12 @@ impl<T: Table> ExprBuf<T> {
     }
 
     fn push_col(&mut self, col: T::Col) {
+        self.push_col_of::<T>(col);
+    }
+
+    fn push_col_of<U: Table>(&mut self, col: U::Col) {
         self.buf.push('"');
-        self.buf.push_str(T::TABLE_NAME);
+        self.buf.push_str(U::TABLE_NAME);
         self.buf.push_str("\".");
         self.buf.push_str(col.as_ref());
     }
@@ -645,10 +649,7 @@ impl<T: Table> ExprOp<T> {
 
     /// Append a qualified column reference from another table.
     pub fn column_of<U: Table>(mut self, col: U::Col) -> Expr<T> {
-        self.0.buf.push('"');
-        self.0.buf.push_str(U::TABLE_NAME);
-        self.0.buf.push_str("\".");
-        self.0.buf.push_str(col.as_ref());
+        self.0.push_col_of::<U>(col);
         Expr(self.0)
     }
 

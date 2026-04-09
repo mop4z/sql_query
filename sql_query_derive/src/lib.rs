@@ -233,6 +233,12 @@ pub fn derive_sql_param_enum(input: TokenStream) -> TokenStream {
                 ::sql_query::SqlParam::custom(value.clone())
             }
         }
+
+        impl From<Vec<#name>> for ::sql_query::SqlParam {
+            fn from(value: Vec<#name>) -> Self {
+                ::sql_query::SqlParam::custom(value)
+            }
+        }
     };
 
     TokenStream::from(expanded)
