@@ -5,8 +5,11 @@ use sqlx::QueryBuilder;
 use crate::{
     SqlBase,
     shared::{
-        Cte, Returning, SqlConflict, Table, UnbindedQuery, error::SqlQueryError, expr::Expr,
-        prepend_ctes, push_returning, value::SqlParam,
+        Cte, Returning, SqlConflict, Table, UnbindedQuery,
+        error::SqlQueryError,
+        expr::{EvalExpr, Expr},
+        prepend_ctes, push_returning,
+        value::SqlParam,
     },
 };
 
@@ -92,7 +95,7 @@ impl<T: Table> SqlInsert<T> {
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self

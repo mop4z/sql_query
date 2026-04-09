@@ -5,8 +5,11 @@ use sqlx::QueryBuilder;
 use crate::{
     SqlBase,
     shared::{
-        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::Expr, prepend_ctes,
-        push_conditions, push_returning, value::SqlParam,
+        Cte, Returning, Table, UnbindedQuery,
+        error::SqlQueryError,
+        expr::{EvalExpr, Expr},
+        prepend_ctes, push_conditions, push_returning,
+        value::SqlParam,
     },
 };
 
@@ -47,7 +50,7 @@ impl<T: Table> SqlDelete<T> {
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
         self.returning = Returning::Columns(cols);
         self
@@ -182,7 +185,7 @@ mod tests {
     #[test]
     fn delete_with_subquery() {
         let sub = crate::select::SqlSelect::new::<Users>()
-            .from([UExpr::new().column(UsersCol::Id).into()])
+            .from([UExpr::new().column(UsersCol::Id)])
             .filter([UsersCol::Name.eq("alice")]);
 
         let (sql, binds) = build(

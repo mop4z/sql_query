@@ -5,7 +5,7 @@ use crate::{
     shared::{
         Cte, Table, UnbindedQuery,
         error::SqlQueryError,
-        expr::{Expr, ExprCol, SqlJoin, SqlOrder},
+        expr::{EvalExpr, Expr, ExprCol, SqlJoin, SqlOrder},
         prepend_ctes, push_conditions,
         value::SqlParam,
     },
@@ -48,15 +48,7 @@ impl SqlSelect {
     }
 
     /// Sets the columns to select from the given table.
-    pub fn from<T: Table>(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
-        for c in columns {
-            self.columns.push(c.eval().unwrap().0);
-        }
-        self
-    }
-
-    /// Sets the columns to select, accepting `ExprCol` (e.g. aggregate wraps like `.count()`).
-    pub fn from_col<T: Table>(mut self, columns: impl IntoIterator<Item = ExprCol<T>>) -> Self {
+    pub fn from(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
             self.columns.push(c.eval().unwrap().0);
         }
@@ -81,7 +73,7 @@ impl SqlSelect {
     }
 
     /// Adds GROUP BY columns to the query.
-    pub fn group_by<T: Table>(mut self, columns: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn group_by(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
             self.group_by.push(c.eval().unwrap().0);
         }
@@ -89,13 +81,7 @@ impl SqlSelect {
     }
 
     /// Appends an ORDER BY clause for the given column and direction.
-    pub fn order_by<T: Table>(mut self, column: Expr<T>, order: SqlOrder) -> Self {
-        self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
-        self
-    }
-
-    /// Appends an ORDER BY clause accepting an `ExprCol` (e.g. for ordering by aggregates).
-    pub fn order_by_col<T: Table>(mut self, column: ExprCol<T>, order: SqlOrder) -> Self {
+    pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
         self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
         self
     }
@@ -228,10 +214,10 @@ mod tests {
 
     #[test]
     fn select_columns() {
-        let (sql, _) = build(SqlSelect::new::<Users>().from([
-            UExpr::new().column(UsersCol::Name).into(),
-            UExpr::new().column(UsersCol::Age).into(),
-        ]));
+        let (sql, _) = build(
+            SqlSelect::new::<Users>()
+                .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)]),
+        );
         assert_eq!(sql, r#"SELECT "users".name, "users".age FROM "users""#);
     }
 
@@ -279,8 +265,7 @@ mod tests {
     #[test]
     fn select_with_order_by() {
         let (sql, _) = build(
-            SqlSelect::new::<Users>()
-                .order_by(UExpr::new().column(UsersCol::Name).into(), SqlOrder::Asc),
+            SqlSelect::new::<Users>().order_by(UExpr::new().column(UsersCol::Name), SqlOrder::Asc),
         );
         assert_eq!(sql, r#"SELECT * FROM "users" ORDER BY "users".name ASC"#);
     }
@@ -289,8 +274,8 @@ mod tests {
     fn select_with_multiple_order_by() {
         let (sql, _) = build(
             SqlSelect::new::<Users>()
-                .order_by(UExpr::new().column(UsersCol::Name).into(), SqlOrder::Asc)
-                .order_by(UExpr::new().column(UsersCol::Age).into(), SqlOrder::DescNullsFirst),
+                .order_by(UExpr::new().column(UsersCol::Name), SqlOrder::Asc)
+                .order_by(UExpr::new().column(UsersCol::Age), SqlOrder::DescNullsFirst),
         );
         assert_eq!(
             sql,
@@ -303,10 +288,10 @@ mod tests {
         let (sql, _) = build(
             SqlSelect::new::<Users>()
                 .from([
-                    UExpr::new().column(UsersCol::Age).into(),
+                    UExpr::from(UExpr::new().column(UsersCol::Age)),
                     UsersCol::Id.count().alias("count"),
                 ])
-                .group_by([UExpr::new().column(UsersCol::Age).into()]),
+                .group_by([UExpr::new().column(UsersCol::Age)]),
         );
         assert_eq!(
             sql,
@@ -343,9 +328,8 @@ mod tests {
 
     #[test]
     fn select_distinct_with_columns() {
-        let (sql, _) = build(
-            SqlSelect::new::<Users>().distinct().from([UExpr::new().column(UsersCol::Name).into()]),
-        );
+        let (sql, _) =
+            build(SqlSelect::new::<Users>().distinct().from([UExpr::new().column(UsersCol::Name)]));
         assert_eq!(sql, r#"SELECT DISTINCT "users".name FROM "users""#);
     }
 
@@ -403,12 +387,9 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
                 .distinct()
-                .from([
-                    UExpr::new().column(UsersCol::Name).into(),
-                    UExpr::new().column(UsersCol::Age).into(),
-                ])
+                .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)])
                 .filter([UsersCol::Age.eq(18i32)])
-                .order_by(UExpr::new().column(UsersCol::Name).into(), SqlOrder::AscNullsLast)
+                .order_by(UExpr::new().column(UsersCol::Name), SqlOrder::AscNullsLast)
                 .limit(50)
                 .offset(10),
         );
@@ -456,11 +437,11 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
                 .from([
-                    UExpr::new().column(UsersCol::Age).into(),
+                    UExpr::from(UExpr::new().column(UsersCol::Age)),
                     UsersCol::Id.count().alias("count"),
                 ])
-                .group_by([UExpr::new().column(UsersCol::Age).into()])
-                .having([UsersCol::Id.count().eq().val(SqlParam::I32(5)).into()]),
+                .group_by([UExpr::new().column(UsersCol::Age)])
+                .having([UsersCol::Id.count().eq().val(SqlParam::I32(5))]),
         );
         assert_eq!(
             sql,
@@ -474,12 +455,12 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
                 .from([
-                    UExpr::new().column(UsersCol::Age).into(),
+                    UExpr::from(UExpr::new().column(UsersCol::Age)),
                     UsersCol::Id.count().alias("count"),
                 ])
                 .filter([UsersCol::Name.eq("alice")])
-                .group_by([UExpr::new().column(UsersCol::Age).into()])
-                .having([UsersCol::Id.count().eq().val(SqlParam::I32(3)).into()]),
+                .group_by([UExpr::new().column(UsersCol::Age)])
+                .having([UsersCol::Id.count().eq().val(SqlParam::I32(3))]),
         );
         assert_eq!(
             sql,
@@ -491,7 +472,7 @@ mod tests {
     #[test]
     fn filter_with_subquery() {
         let sub = SqlSelect::new::<Posts>()
-            .from([PExpr::new().column(PostsCol::UserId).into()])
+            .from([PExpr::new().column(PostsCol::UserId)])
             .filter([PostsCol::Title.eq("hello")]);
 
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([
@@ -507,7 +488,7 @@ mod tests {
 
     #[test]
     fn filter_with_subquery_no_binds() {
-        let sub = SqlSelect::new::<Posts>().from([PExpr::new().column(PostsCol::UserId).into()]);
+        let sub = SqlSelect::new::<Posts>().from([PExpr::new().column(PostsCol::UserId)]);
 
         let (sql, binds) = build(
             SqlSelect::new::<Users>().filter([UExpr::new().column(UsersCol::Id).in_select(sub)]),

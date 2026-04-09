@@ -7,6 +7,18 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
+// EvalExpr — trait for any expression type that can be evaluated to SQL
+// ---------------------------------------------------------------------------
+
+/// Types that can be evaluated into a SQL string and bound parameters.
+///
+/// Implemented by all "complete" expression states (`Expr<T>`, `ExprCol<T>`),
+/// allowing query-builder methods to accept any of them without `Into` conversion.
+pub trait EvalExpr {
+    fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError>;
+}
+
+// ---------------------------------------------------------------------------
 // Internal buffer shared by all typestate structs
 // ---------------------------------------------------------------------------
 
@@ -228,11 +240,6 @@ impl<T: Table> Expr<T> {
         self
     }
 
-    /// Finalise the expression into its SQL string and bound parameters.
-    pub fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
-        self.0.eval()
-    }
-
     /// Split into (column_name, value-only Expr) for INSERT column extraction.
     pub(crate) fn into_col_and_val(self) -> (Option<String>, String, Vec<SqlParam>) {
         let sql = self.0.buf;
@@ -249,6 +256,12 @@ impl<T: Table> Expr<T> {
             }
         }
         (None, sql, binds)
+    }
+}
+
+impl<T: Table> EvalExpr for Expr<T> {
+    fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
+        self.0.eval()
     }
 }
 
@@ -547,10 +560,10 @@ impl<T: Table> ExprCol<T> {
         write!(self.0.buf, " AS {}", name).unwrap();
         Expr(self.0)
     }
+}
 
-    // -- eval ----------------------------------------------------------------
-
-    pub fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
+impl<T: Table> EvalExpr for ExprCol<T> {
+    fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         self.0.eval()
     }
 }
