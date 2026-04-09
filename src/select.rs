@@ -1,5 +1,3 @@
-use sqlx::QueryBuilder;
-
 use crate::{
     SqlBase,
     shared::{
@@ -118,12 +116,18 @@ impl SqlSelect {
 }
 
 impl SqlBase for SqlSelect {
-    fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error> {
-        let select = if self.distinct { "SELECT DISTINCT" } else { "SELECT" };
-        let columns =
-            if self.columns.is_empty() { "*".to_string() } else { self.columns.join(", ") };
-
-        let mut sql = format!("{select} {columns} FROM \"{}\"", self.table);
+    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+        let select = if self.distinct { "SELECT DISTINCT " } else { "SELECT " };
+        let mut sql = String::with_capacity(128);
+        sql.push_str(select);
+        if self.columns.is_empty() {
+            sql.push('*');
+        } else {
+            sql.push_str(&self.columns.join(", "));
+        }
+        sql.push_str(" FROM \"");
+        sql.push_str(self.table);
+        sql.push('"');
         for join in &self.joined_tables {
             sql.push(' ');
             sql.push_str(join);
@@ -131,32 +135,30 @@ impl SqlBase for SqlSelect {
 
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
-
-        let mut qb = QueryBuilder::new(sql);
-        push_conditions("WHERE", self.filters, &mut qb, &mut binds)?;
+        push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
 
         if !self.group_by.is_empty() {
-            qb.push(" GROUP BY ");
-            qb.push(self.group_by.join(", "));
+            sql.push_str(" GROUP BY ");
+            sql.push_str(&self.group_by.join(", "));
         }
 
-        push_conditions("HAVING", self.having, &mut qb, &mut binds)?;
+        push_conditions("HAVING", self.having, &mut sql, &mut binds)?;
 
         if !self.order_by.is_empty() {
-            qb.push(" ORDER BY ");
-            qb.push(self.order_by.join(", "));
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&self.order_by.join(", "));
         }
 
         if let Some(limit) = self.limit {
-            qb.push(" LIMIT $#");
+            sql.push_str(" LIMIT $#");
             binds.push(SqlParam::I64(limit as i64));
         }
         if let Some(offset) = self.offset {
-            qb.push(" OFFSET $#");
+            sql.push_str(" OFFSET $#");
             binds.push(SqlParam::I64(offset as i64));
         }
 
-        Ok(UnbindedQuery { qb, binds })
+        Ok(UnbindedQuery { sql, binds })
     }
 }
 

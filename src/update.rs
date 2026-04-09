@@ -1,5 +1,3 @@
-use sqlx::QueryBuilder;
-
 use crate::{
     SqlBase,
     shared::{
@@ -47,7 +45,11 @@ impl SqlUpdate {
 
     /// Adds a FROM clause to reference another table in the update.
     pub fn from<T: Table>(mut self) -> Self {
-        self.from_tables.push(format!("\"{}\"", T::TABLE_NAME));
+        let mut s = String::with_capacity(T::TABLE_NAME.len() + 2);
+        s.push('"');
+        s.push_str(T::TABLE_NAME);
+        s.push('"');
+        self.from_tables.push(s);
         self
     }
 
@@ -93,8 +95,11 @@ impl SqlUpdate {
 }
 
 impl SqlBase for SqlUpdate {
-    fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error> {
-        let mut sql = format!("UPDATE \"{}\" SET ", self.table);
+    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+        let mut sql = String::with_capacity(128);
+        sql.push_str("UPDATE \"");
+        sql.push_str(self.table);
+        sql.push_str("\" SET ");
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
 
@@ -121,11 +126,10 @@ impl SqlBase for SqlUpdate {
             sql.push_str(&self.from_tables.join(", "));
         }
 
-        let mut qb = QueryBuilder::new(sql);
-        push_conditions("WHERE", self.filters, &mut qb, &mut binds)?;
-        push_returning(self.returning, &mut qb);
+        push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
+        push_returning(self.returning, &mut sql);
 
-        Ok(UnbindedQuery { qb, binds })
+        Ok(UnbindedQuery { sql, binds })
     }
 }
 

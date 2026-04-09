@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use sqlx::QueryBuilder;
-
 use crate::{
     SqlBase,
     shared::{
@@ -70,22 +68,23 @@ impl<T: Table> SqlDelete<T> {
 }
 
 impl<T: Table> SqlBase for SqlDelete<T> {
-    fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error> {
+    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
         if self.filters.is_empty() && !self.delete_all {
             return Err(sqlx::Error::Protocol(
                 SqlQueryError::DeleteRequiresFilterOrDeleteAll.to_string(),
             ));
         }
 
-        let mut sql = format!("DELETE FROM \"{}\"", T::TABLE_NAME);
+        let mut sql = String::with_capacity(64);
+        sql.push_str("DELETE FROM \"");
+        sql.push_str(T::TABLE_NAME);
+        sql.push('"');
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
+        push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
+        push_returning(self.returning, &mut sql);
 
-        let mut qb = QueryBuilder::new(sql);
-        push_conditions("WHERE", self.filters, &mut qb, &mut binds)?;
-        push_returning(self.returning, &mut qb);
-
-        Ok(UnbindedQuery { qb, binds })
+        Ok(UnbindedQuery { sql, binds })
     }
 }
 

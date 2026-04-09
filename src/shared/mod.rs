@@ -65,22 +65,19 @@ pub(crate) enum Returning {
     Columns(Vec<String>),
 }
 
-pub(crate) fn push_returning(
-    returning: Returning,
-    qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
-) {
+pub(crate) fn push_returning(returning: Returning, sql: &mut String) {
     match returning {
         Returning::None => {}
         Returning::All => {
-            qb.push(" RETURNING *");
+            sql.push_str(" RETURNING *");
         }
         Returning::Columns(cols) => {
-            qb.push(" RETURNING ");
+            sql.push_str(" RETURNING ");
             for (i, col) in cols.iter().enumerate() {
                 if i > 0 {
-                    qb.push(", ");
+                    sql.push_str(", ");
                 }
-                qb.push(col);
+                sql.push_str(col);
             }
         }
     }

@@ -1,16 +1,16 @@
-use std::{fmt::Write, marker::PhantomData};
+use std::marker::PhantomData;
 
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{
-    Executor, FromRow, Postgres, QueryBuilder,
+    Executor, FromRow, Postgres,
     postgres::{PgPool, PgQueryResult, PgRow},
 };
 
 use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
 
 /// A query whose placeholders have not yet been renumbered or bound.
-pub struct UnbindedQuery<'q> {
-    pub(crate) qb: QueryBuilder<'q, Postgres>,
+pub struct UnbindedQuery {
+    pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
 }
 
@@ -148,7 +148,8 @@ fn renumber_placeholders(sql: &str) -> String {
     let mut rest = sql;
     while let Some(pos) = rest.find("$#") {
         out.push_str(&rest[..pos]);
-        let _ = write!(out, "${idx}");
+        out.push('$');
+        out.push_str(itoa::Buffer::new().format(idx));
         idx += 1;
         rest = &rest[pos + 2..];
     }
@@ -159,20 +160,20 @@ fn renumber_placeholders(sql: &str) -> String {
 pub(crate) fn push_conditions(
     keyword: &str,
     conditions: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
-    qb: &mut QueryBuilder<'_, Postgres>,
+    sql: &mut String,
     binds: &mut Vec<SqlParam>,
 ) -> Result<(), sqlx::Error> {
     if conditions.is_empty() {
         return Ok(());
     }
-    qb.push(" ");
-    qb.push(keyword);
-    qb.push(" 1=1");
+    sql.push(' ');
+    sql.push_str(keyword);
+    sql.push_str(" 1=1");
     for result in conditions {
         let (filter, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
         binds.extend(params);
-        qb.push(" AND ");
-        qb.push(&filter);
+        sql.push_str(" AND ");
+        sql.push_str(&filter);
     }
     Ok(())
 }
@@ -181,23 +182,23 @@ pub(crate) fn push_conditions(
 // UnbindedQuery
 // ---------------------------------------------------------------------------
 
-impl<'q> UnbindedQuery<'q> {
+impl UnbindedQuery {
     pub fn into_raw(self) -> (String, Vec<SqlParam>) {
-        (self.qb.into_sql(), self.binds)
+        (self.sql, self.binds)
     }
 
     pub fn bind(self) -> BoundQuery {
-        let sql = renumber_placeholders(&self.qb.into_sql());
+        let sql = renumber_placeholders(&self.sql);
         BoundQuery { sql, binds: self.binds }
     }
 
     pub fn bind_as<T>(self) -> BoundQueryAs<T> {
-        let sql = renumber_placeholders(&self.qb.into_sql());
+        let sql = renumber_placeholders(&self.sql);
         BoundQueryAs { sql, binds: self.binds, _t: PhantomData }
     }
 
     pub fn bind_scalar<T>(self) -> BoundQueryScalar<T> {
-        let sql = renumber_placeholders(&self.qb.into_sql());
+        let sql = renumber_placeholders(&self.sql);
         BoundQueryScalar { sql, binds: self.binds, _t: PhantomData }
     }
 }

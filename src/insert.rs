@@ -1,7 +1,3 @@
-use std::fmt::Write;
-
-use sqlx::QueryBuilder;
-
 use crate::{
     SqlBase,
     shared::{
@@ -115,9 +111,13 @@ impl<T: Table> SqlInsert<T> {
 }
 
 impl<T: Table> SqlBase for SqlInsert<T> {
-    fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error> {
-        let col_list = self.columns.join(", ");
-        let mut sql = format!("INSERT INTO \"{}\" ({col_list})", T::TABLE_NAME);
+    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+        let mut sql = String::with_capacity(128);
+        sql.push_str("INSERT INTO \"");
+        sql.push_str(T::TABLE_NAME);
+        sql.push_str("\" (");
+        sql.push_str(&self.columns.join(", "));
+        sql.push(')');
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
 
@@ -146,20 +146,27 @@ impl<T: Table> SqlBase for SqlInsert<T> {
                     sql.push_str(" ON CONFLICT DO NOTHING");
                 }
                 SqlConflict::DoUpdate { conflict_cols, update_cols } => {
-                    let cols: Vec<&str> = conflict_cols.iter().map(|c| c.as_ref()).collect();
-                    write!(sql, " ON CONFLICT ({}) DO UPDATE SET ", cols.join(", ")).unwrap();
+                    sql.push_str(" ON CONFLICT (");
+                    for (i, c) in conflict_cols.iter().enumerate() {
+                        if i > 0 {
+                            sql.push_str(", ");
+                        }
+                        sql.push_str(c.as_ref());
+                    }
+                    sql.push_str(") DO UPDATE SET ");
                     push_excluded_sets(&mut sql, &update_cols);
                 }
                 SqlConflict::OnConstraint { name, update_cols } => {
-                    write!(sql, " ON CONFLICT ON CONSTRAINT {name} DO UPDATE SET ").unwrap();
+                    sql.push_str(" ON CONFLICT ON CONSTRAINT ");
+                    sql.push_str(name);
+                    sql.push_str(" DO UPDATE SET ");
                     push_excluded_sets(&mut sql, &update_cols);
                 }
             }
         }
 
-        let mut qb = QueryBuilder::new(sql);
-        push_returning(self.returning, &mut qb);
-        Ok(UnbindedQuery { qb, binds })
+        push_returning(self.returning, &mut sql);
+        Ok(UnbindedQuery { sql, binds })
     }
 }
 
@@ -169,7 +176,9 @@ fn push_excluded_sets<C: AsRef<str>>(sql: &mut String, cols: &[C]) {
             sql.push_str(", ");
         }
         let c = c.as_ref();
-        write!(sql, "{c} = EXCLUDED.{c}").unwrap();
+        sql.push_str(c);
+        sql.push_str(" = EXCLUDED.");
+        sql.push_str(c);
     }
 }
 

@@ -34,7 +34,7 @@ mod update;
 
 /// Trait implemented by all statement builders (SELECT, INSERT, UPDATE, DELETE).
 pub trait SqlBase {
-    fn build<'a>(self) -> Result<UnbindedQuery<'a>, sqlx::Error>;
+    fn build(self) -> Result<UnbindedQuery, sqlx::Error>;
 }
 
 pub struct SqlWith {
