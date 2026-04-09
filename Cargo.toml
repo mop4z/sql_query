@@ -16,3 +16,15 @@ sql_query_derive = { path = "sql_query_derive" }
 ts-rs = { version = "12.0", features = ["chrono-impl", "serde-json-impl", "uuid-impl"] }
 redis = { version = "0.29", features = ["tokio-comp", "aio"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[profile.dev]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
+
+[profile.test.build-override]
+opt-level = 3

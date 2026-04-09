@@ -72,6 +72,12 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::sql_query::EvalExpr for #enum_name {
+            fn eval(self) -> Result<(String, Vec<::sql_query::SqlParam>), ::sql_query::SqlQueryError> {
+                ::sql_query::Expr::<#struct_name>::from(self).eval()
+            }
+        }
+
         impl #enum_name {
             pub fn is_null(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::Expr::new().column(self).is_null()
