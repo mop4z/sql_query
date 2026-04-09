@@ -1,4 +1,4 @@
-use std::{fmt::Write, marker::PhantomData};
+use std::marker::PhantomData;
 
 use smallvec::SmallVec;
 
@@ -190,16 +190,15 @@ impl<T: Table> Expr<T> {
 
     /// Append a type cast: `::ty`.
     pub fn cast(mut self, ty: &str) -> Self {
-        write!(self.0.buf, "::{}", ty).unwrap();
+        self.0.buf.push_str("::");
+        self.0.buf.push_str(ty);
         self
     }
 
     /// Wrap the buffer with an arbitrary function: `name(buf)`.
     /// Escape hatch for functions not yet supported as dedicated methods.
     pub fn wrap_raw(mut self, name: &str) -> Self {
-        self.0.buf.insert(0, '(');
-        self.0.buf.insert_str(0, name);
-        self.0.push(")");
+        self.0.wrap_fn(name);
         self
     }
 
@@ -210,7 +209,11 @@ impl<T: Table> Expr<T> {
         let (a_sql, a_binds) = a.0.eval().unwrap();
         let (b_sql, b_binds) = b.0.eval().unwrap();
         let mut e = Self::new();
-        write!(e.0.buf, "GREATEST({}, {})", a_sql, b_sql).unwrap();
+        e.0.buf.push_str("GREATEST(");
+        e.0.buf.push_str(&a_sql);
+        e.0.buf.push_str(", ");
+        e.0.buf.push_str(&b_sql);
+        e.0.buf.push(')');
         e.0.binds.extend(a_binds);
         e.0.binds.extend(b_binds);
         e
@@ -223,7 +226,11 @@ impl<T: Table> Expr<T> {
         let (a_sql, a_binds) = a.0.eval().unwrap();
         let (b_sql, b_binds) = b.0.eval().unwrap();
         let mut e = Self::new();
-        write!(e.0.buf, "LEAST({}, {})", a_sql, b_sql).unwrap();
+        e.0.buf.push_str("LEAST(");
+        e.0.buf.push_str(&a_sql);
+        e.0.buf.push_str(", ");
+        e.0.buf.push_str(&b_sql);
+        e.0.buf.push(')');
         e.0.binds.extend(a_binds);
         e.0.binds.extend(b_binds);
         e
@@ -243,7 +250,9 @@ impl<T: Table> Expr<T> {
     pub fn select(mut self, q: SqlSelect) -> Self {
         let uq = SqlBase::build(q).expect("subquery build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
-        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.buf.push('(');
+        self.0.buf.push_str(&sub_sql);
+        self.0.buf.push(')');
         self.0.binds.extend(sub_binds);
         self
     }
@@ -388,7 +397,9 @@ impl<T: Table> ExprCol<T> {
         self.0.push(" IN ");
         let uq = SqlBase::build(q).expect("subquery build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
-        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.buf.push('(');
+        self.0.buf.push_str(&sub_sql);
+        self.0.buf.push(')');
         self.0.binds.extend(sub_binds);
         Expr(self.0)
     }
@@ -397,7 +408,9 @@ impl<T: Table> ExprCol<T> {
         self.0.push(" NOT IN ");
         let uq = SqlBase::build(q).expect("subquery build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
-        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.buf.push('(');
+        self.0.buf.push_str(&sub_sql);
+        self.0.buf.push(')');
         self.0.binds.extend(sub_binds);
         Expr(self.0)
     }
@@ -549,23 +562,23 @@ impl<T: Table> ExprCol<T> {
 
     /// Append a type cast: `::ty`.
     pub fn cast(mut self, ty: &str) -> Self {
-        write!(self.0.buf, "::{}", ty).unwrap();
+        self.0.buf.push_str("::");
+        self.0.buf.push_str(ty);
         self
     }
 
     /// Wrap the buffer with an arbitrary function: `name(buf)`.
     /// Escape hatch for functions not yet supported as dedicated methods.
     pub fn wrap_raw(mut self, name: &str) -> Self {
-        self.0.buf.insert(0, '(');
-        self.0.buf.insert_str(0, name);
-        self.0.push(")");
+        self.0.wrap_fn(name);
         self
     }
 
     // -- alias ---------------------------------------------------------------
 
     pub fn alias(mut self, name: &str) -> Expr<T> {
-        write!(self.0.buf, " AS {}", name).unwrap();
+        self.0.buf.push_str(" AS ");
+        self.0.buf.push_str(name);
         Expr(self.0)
     }
 }
@@ -621,7 +634,9 @@ impl<T: Table> ExprOp<T> {
     pub fn select(mut self, q: SqlSelect) -> Expr<T> {
         let uq = SqlBase::build(q).expect("subquery build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
-        write!(self.0.buf, "({})", sub_sql).unwrap();
+        self.0.buf.push('(');
+        self.0.buf.push_str(&sub_sql);
+        self.0.buf.push(')');
         self.0.binds.extend(sub_binds);
         Expr(self.0)
     }
