@@ -15,6 +15,7 @@ pub struct SqlSelect {
     table: &'static str,
     pub(super) columns: Vec<String>,
     joined_tables: Vec<String>,
+    join_binds: Vec<SqlParam>,
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     having: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     group_by: Vec<String>,
@@ -37,6 +38,7 @@ impl SqlSelect {
             table: T::TABLE_NAME,
             columns: Vec::new(),
             joined_tables: Vec::new(),
+            join_binds: Vec::new(),
             filters: Vec::new(),
             having: Vec::new(),
             group_by: Vec::new(),
@@ -75,6 +77,25 @@ impl SqlSelect {
             t1_col.eval().unwrap().0,
             t2_col.eval().unwrap().0,
         ));
+        self
+    }
+
+    /// Adds a `{join} JOIN LATERAL (subquery) alias ON TRUE` clause.
+    pub fn join_lateral(
+        mut self,
+        sql_join: SqlJoin,
+        alias: &str,
+        subquery: impl SqlBase,
+    ) -> Self {
+        let uq = subquery.build().expect("join_lateral build failed");
+        let (sub_sql, sub_binds) = uq.into_raw();
+        self.joined_tables.push(format!(
+            "{} JOIN LATERAL ({}) {} ON TRUE",
+            sql_join.as_ref(),
+            sub_sql,
+            alias,
+        ));
+        self.join_binds.extend(sub_binds);
         self
     }
 
@@ -187,7 +208,7 @@ impl SqlBase for SqlSelect {
             sql.push_str(join);
         }
 
-        let mut binds = vec![];
+        let mut binds = self.join_binds;
         prepend_ctes(self.ctes, &mut sql, &mut binds);
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
 
@@ -397,6 +418,27 @@ mod tests {
         let (sql, _) =
             build(SqlSelect::new::<Users>().distinct().from([UExpr::new().column(UsersCol::Name)]));
         assert_eq!(sql, r#"SELECT DISTINCT "users".name FROM "users""#);
+    }
+
+    #[test]
+    fn select_with_cross_join_lateral() {
+        let sub = SqlSelect::new::<Posts>()
+            .from([PExpr::new().column(PostsCol::Title)])
+            .filter([PostsCol::UserId.eq(1i32)])
+            .limit(1);
+        let (sql, binds) = build(
+            SqlSelect::new::<Users>()
+                .join_lateral(SqlJoin::Cross, "lat", sub)
+                .filter([UsersCol::Name.eq("alice")]),
+        );
+        assert_eq!(
+            sql,
+            r#"SELECT * FROM "users" CROSS JOIN LATERAL (SELECT "posts".title FROM "posts" WHERE 1=1 AND "posts".user_id = $1 LIMIT $2) lat ON TRUE WHERE 1=1 AND "users".name = $3"#,
+        );
+        assert_eq!(
+            binds,
+            vec![SqlParam::I32(1), SqlParam::I64(1), SqlParam::String("alice".into())],
+        );
     }
 
     #[test]
