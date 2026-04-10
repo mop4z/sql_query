@@ -65,16 +65,19 @@ impl<T: Table> ExprBuf<T> {
         self.buf = new_buf;
     }
 
-    fn wrap_fn_val(&mut self, name: &str, val: impl Into<SqlParam>) {
-        let mut new_buf = String::with_capacity(name.len() + 1 + self.buf.len() + 6);
+    fn wrap_fn_expr(&mut self, name: &str, expr_sql: &str, expr_binds: Vec<SqlParam>) {
+        let mut new_buf = String::with_capacity(name.len() + 1 + self.buf.len() + 2 + expr_sql.len() + 1);
         new_buf.push_str(name);
         new_buf.push('(');
         new_buf.push_str(&self.buf);
         new_buf.push_str(", ");
+        new_buf.push_str(expr_sql);
+        new_buf.push(')');
         self.buf = new_buf;
-        self.push_val(val);
-        self.buf.push(')');
+        self.binds.extend(expr_binds);
     }
+
+
 
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         Ok((self.buf, self.binds.into_vec()))
@@ -171,15 +174,17 @@ impl<T: Table> Expr<T> {
         self
     }
 
-    /// Wrap as `GREATEST(self, val)`.
-    pub fn greatest(mut self, val: impl Into<SqlParam>) -> Self {
-        self.0.wrap_fn_val("GREATEST", val);
+    /// Wrap as `GREATEST(self, other)`.
+    pub fn greatest(mut self, other: impl EvalExpr) -> Self {
+        let (sql, binds) = other.eval().unwrap();
+        self.0.wrap_fn_expr("GREATEST", &sql, binds);
         self
     }
 
-    /// Wrap as `LEAST(self, val)`.
-    pub fn least(mut self, val: impl Into<SqlParam>) -> Self {
-        self.0.wrap_fn_val("LEAST", val);
+    /// Wrap as `LEAST(self, other)`.
+    pub fn least(mut self, other: impl EvalExpr) -> Self {
+        let (sql, binds) = other.eval().unwrap();
+        self.0.wrap_fn_expr("LEAST", &sql, binds);
         self
     }
 
@@ -315,6 +320,12 @@ impl<T: Table> Expr<T> {
 impl<T: Table> EvalExpr for Expr<T> {
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         self.0.eval()
+    }
+}
+
+impl EvalExpr for SqlParam {
+    fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
+        Ok(("$#".to_string(), vec![self]))
     }
 }
 
@@ -724,14 +735,14 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
         Expr::new().column(self).max()
     }
 
-    fn greatest(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn greatest(self, other: impl EvalExpr) -> Expr<T> {
         let col_expr: Expr<T> = Expr::new().column(self).into();
-        col_expr.greatest(val)
+        col_expr.greatest(other)
     }
 
-    fn least(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn least(self, other: impl EvalExpr) -> Expr<T> {
         let col_expr: Expr<T> = Expr::new().column(self).into();
-        col_expr.least(val)
+        col_expr.least(other)
     }
 
     fn lower(self) -> ExprCol<T> {
