@@ -713,7 +713,9 @@ impl<T: Table> Expr<T> {
     /// `NTILE(n)` — distribute rows into n buckets.
     pub fn ntile(n: u32) -> Self {
         let mut e = Self::new();
-        e.0.push(&format!("NTILE({n})"));
+        e.0.push("NTILE(");
+        e.0.push(itoa::Buffer::new().format(n));
+        e.0.push(")");
         e
     }
 
@@ -740,9 +742,10 @@ impl<T: Table> Expr<T> {
     /// `NTH_VALUE(expr, n)` — nth value in window frame.
     pub fn nth_value(col: impl EvalExpr, n: u32) -> Self {
         let mut e = Self::window_fn("NTH_VALUE", col);
-        // Reopen the closing paren to append ", n"
         e.0.buf.pop(); // remove ')'
-        e.0.push(&format!(", {n})"));
+        e.0.push(", ");
+        e.0.push(itoa::Buffer::new().format(n));
+        e.0.push(")");
         e
     }
 
@@ -1172,8 +1175,10 @@ impl WindowSpec {
 
     /// Add an ORDER BY expression with direction.
     pub fn order_by(mut self, col: impl EvalExpr, order: SqlOrder) -> Self {
-        let (sql, binds) = col.eval().unwrap();
-        self.order_by.push(format!("{} {}", sql, order.as_ref()));
+        let (mut sql, binds) = col.eval().unwrap();
+        sql.push(' ');
+        sql.push_str(order.as_ref());
+        self.order_by.push(sql);
         self.binds.extend(binds);
         self
     }

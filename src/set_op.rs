@@ -106,7 +106,10 @@ impl SqlSetOp {
 
     /// Appends an ORDER BY clause on the combined result.
     pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
-        self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
+        let mut s = column.eval().unwrap().0;
+        s.push(' ');
+        s.push_str(order.as_ref());
+        self.order_by.push(s);
         self
     }
 

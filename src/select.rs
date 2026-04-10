@@ -70,31 +70,30 @@ impl SqlSelect {
         t1_col: Expr<T1>,
         t2_col: Expr<T2>,
     ) -> Self {
-        self.joined_tables.push(format!(
-            "{} JOIN \"{}\" ON {} = {}",
-            sql_join.as_ref(),
-            T1::TABLE_NAME,
-            t1_col.eval().unwrap().0,
-            t2_col.eval().unwrap().0,
-        ));
+        let mut s = String::with_capacity(64);
+        s.push_str(sql_join.as_ref());
+        s.push_str(" JOIN \"");
+        s.push_str(T1::TABLE_NAME);
+        s.push_str("\" ON ");
+        s.push_str(&t1_col.eval().unwrap().0);
+        s.push_str(" = ");
+        s.push_str(&t2_col.eval().unwrap().0);
+        self.joined_tables.push(s);
         self
     }
 
     /// Adds a `{join} JOIN LATERAL (subquery) alias ON TRUE` clause.
-    pub fn join_lateral(
-        mut self,
-        sql_join: SqlJoin,
-        alias: &str,
-        subquery: impl SqlBase,
-    ) -> Self {
+    pub fn join_lateral(mut self, sql_join: SqlJoin, alias: &str, subquery: impl SqlBase) -> Self {
         let uq = subquery.build().expect("join_lateral build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
-        self.joined_tables.push(format!(
-            "{} JOIN LATERAL ({}) {} ON TRUE",
-            sql_join.as_ref(),
-            sub_sql,
-            alias,
-        ));
+        let mut s = String::with_capacity(sub_sql.len() + 32);
+        s.push_str(sql_join.as_ref());
+        s.push_str(" JOIN LATERAL (");
+        s.push_str(&sub_sql);
+        s.push_str(") ");
+        s.push_str(alias);
+        s.push_str(" ON TRUE");
+        self.joined_tables.push(s);
         self.join_binds.extend(sub_binds);
         self
     }
@@ -109,7 +108,10 @@ impl SqlSelect {
 
     /// Appends an ORDER BY clause for the given column and direction.
     pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
-        self.order_by.push(format!("{} {}", column.eval().unwrap().0, order.as_ref()));
+        let mut s = column.eval().unwrap().0;
+        s.push(' ');
+        s.push_str(order.as_ref());
+        self.order_by.push(s);
         self
     }
 
@@ -717,9 +719,8 @@ mod tests {
     #[test]
     fn filter_or() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UsersCol::Name
-                .eq("alice")
-                .or(UsersCol::Name.eq("bob"))]),
+            SqlSelect::new::<Users>()
+                .filter([UsersCol::Name.eq("alice").or(UsersCol::Name.eq("bob"))]),
         );
         assert_eq!(
             sql,
