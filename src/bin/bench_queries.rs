@@ -13,6 +13,7 @@ define_id!(PostId);
 define_id!(OrderId);
 
 #[derive(Debug, FromRow, SqlCols)]
+#[allow(dead_code)]
 struct Users {
     id: UserId,
     name: String,
@@ -30,6 +31,7 @@ impl Table for Users {
 }
 
 #[derive(Debug, FromRow, SqlCols)]
+#[allow(dead_code)]
 struct Posts {
     id: PostId,
     user_id: UserId,
@@ -45,6 +47,7 @@ impl Table for Posts {
 }
 
 #[derive(Debug, FromRow, SqlCols)]
+#[allow(dead_code)]
 struct Orders {
     id: OrderId,
     user_id: UserId,

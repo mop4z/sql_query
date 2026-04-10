@@ -186,6 +186,7 @@ mod tests {
     define_id!(TestId);
 
     #[derive(Debug, FromRow, SqlCols)]
+    #[allow(dead_code)]
     struct Users {
         id: TestId,
         name: String,
@@ -200,6 +201,7 @@ mod tests {
     }
 
     #[derive(Debug, FromRow, SqlCols)]
+    #[allow(dead_code)]
     struct Posts {
         id: TestId,
         user_id: TestId,

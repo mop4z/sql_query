@@ -220,6 +220,7 @@ mod tests {
     define_id!(TestId);
 
     #[derive(Debug, FromRow, SqlCols)]
+    #[allow(dead_code)]
     struct Users {
         id: TestId,
         name: String,
