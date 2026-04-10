@@ -30,6 +30,7 @@ pub trait EvalExpr {
 // Internal buffer
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone)]
 struct ExprBuf<T: Table> {
     buf: String,
     binds: SmallVec<[SqlParam; 2]>,
@@ -114,6 +115,7 @@ impl<T: Table> ExprBuf<T> {
 ///     .then_(E::new().raw("'active'"))
 ///     .else_(E::new().raw("'inactive'"))
 /// ```
+#[derive(Debug, Clone)]
 pub struct Expr<T: Table>(ExprBuf<T>);
 
 impl<T: Table> Expr<T> {
