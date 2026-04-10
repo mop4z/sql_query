@@ -22,6 +22,7 @@ pub struct SqlSelect {
     offset: Option<u64>,
     distinct: bool,
     exists: bool,
+    for_update: bool,
     ctes: Vec<Cte>,
 }
 
@@ -43,6 +44,7 @@ impl SqlSelect {
             offset: None,
             distinct: false,
             exists: false,
+            for_update: false,
             ctes,
         }
     }
@@ -114,6 +116,12 @@ impl SqlSelect {
         self
     }
 
+    /// Append `FOR UPDATE` — acquire row-level exclusive locks on selected rows.
+    pub fn for_update(mut self) -> Self {
+        self.for_update = true;
+        self
+    }
+
     /// Adds WHERE conditions that are ANDed together.
     pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
@@ -171,6 +179,10 @@ impl SqlBase for SqlSelect {
         if let Some(offset) = self.offset {
             sql.push_str(" OFFSET $#");
             binds.push(SqlParam::I64(offset as i64));
+        }
+
+        if self.for_update {
+            sql.push_str(" FOR UPDATE");
         }
 
         if self.exists {

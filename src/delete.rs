@@ -16,6 +16,7 @@ pub struct SqlDelete<T: Table> {
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
     delete_all: bool,
+    using: Vec<&'static str>,
     ctes: Vec<Cte>,
     _t: PhantomData<T>,
 }
@@ -30,6 +31,7 @@ impl<T: Table> SqlDelete<T> {
             filters: Vec::new(),
             returning: Returning::None,
             delete_all: false,
+            using: Vec::new(),
             ctes,
             _t: PhantomData,
         }
@@ -40,6 +42,18 @@ impl<T: Table> SqlDelete<T> {
     /// `.delete_all()` is called — a safety guard against accidental full-table deletes.
     pub fn delete_all(mut self) -> Self {
         self.delete_all = true;
+        self
+    }
+
+    /// Adds a `USING "table"` clause for joining other tables in the DELETE.
+    ///
+    /// ```ignore
+    /// SqlQ::delete::<Orders>()
+    ///     .using::<Users>()
+    ///     .filter([OrdersCol::UserId.col().eq().column_of::<Users>(UsersCol::Id)])
+    /// ```
+    pub fn using<U: Table>(mut self) -> Self {
+        self.using.push(U::TABLE_NAME);
         self
     }
 
@@ -81,6 +95,17 @@ impl<T: Table> SqlBase for SqlDelete<T> {
         sql.push_str("DELETE FROM \"");
         sql.push_str(T::TABLE_NAME);
         sql.push('"');
+        if !self.using.is_empty() {
+            sql.push_str(" USING ");
+            for (i, table) in self.using.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push('"');
+                sql.push_str(table);
+                sql.push('"');
+            }
+        }
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;

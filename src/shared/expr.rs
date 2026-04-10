@@ -241,6 +241,15 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    // -- array operators -----------------------------------------------------
+
+    /// Append ` && ` — Postgres array overlap operator.
+    pub fn overlap(mut self, v: impl EvalExpr) -> Self {
+        self.0.push(" && ");
+        self.0.push_eval(v);
+        self
+    }
+
     // -- set operators -------------------------------------------------------
 
     /// Append ` IN ($1)`. Pass an array `SqlParam` for multi-value IN.
@@ -841,6 +850,11 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
     /// `"table".col ->> key` — JSON field access, returns text.
     fn json_get_text(self, key: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).json_get_text(key)
+    }
+
+    /// `"table".col && val` — Postgres array overlap check.
+    fn overlap(self, val: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).overlap(val)
     }
 
     /// `"table".col = ANY(val)` — Postgres array contains check.

@@ -193,6 +193,10 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::json_get_text(self, key)
             }
 
+            pub fn overlap(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::overlap(self, val)
+            }
+
             pub fn any(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::any(self, val)
             }
