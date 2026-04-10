@@ -3,7 +3,7 @@ use crate::{
     shared::{
         Cte, Table, UnbindedQuery,
         error::SqlQueryError,
-        expr::{EvalExpr, Expr, ExprCol, SqlJoin, SqlOrder},
+        expr::{EvalExpr, Expr, SqlJoin, SqlOrder},
         prepend_ctes, push_conditions,
         value::SqlParam,
     },
@@ -59,8 +59,8 @@ impl SqlSelect {
     pub fn join<T1: Table, T2: Table>(
         mut self,
         sql_join: SqlJoin,
-        t1_col: ExprCol<T1>,
-        t2_col: ExprCol<T2>,
+        t1_col: Expr<T1>,
+        t2_col: Expr<T2>,
     ) -> Self {
         self.joined_tables.push(format!(
             "{} JOIN \"{}\" ON {} = {}",

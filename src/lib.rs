@@ -17,7 +17,7 @@ pub use select::SqlSelect;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
     error::SqlQueryError,
-    expr::{ColOps, EvalExpr, Expr, ExprCol, ExprOp, SqlJoin, SqlOrder},
+    expr::{ColOps, EvalExpr, Expr, SqlJoin, SqlOrder},
     unbinded_query::{
         BoundQuery, BoundQueryAs, BoundQueryScalar, CachedBoundQueryAs, CachedBoundQueryScalar,
         UnbindedQuery,

@@ -42,17 +42,7 @@ impl Table for Users {
 
 ## Expression System
 
-Expressions use a **typestate pattern** -- each method returns a different struct type, so only valid chains compile:
-
-```
-Expr  --column()--> ExprCol  --eq()/add()/...--> ExprOp  --val()/column()/...--> Expr
-                    ExprCol  --is_null()--------> Expr
-                    ExprCol  --count()/sum()/..-> ExprCol (wraps in function)
-```
-
-**`Expr<T>`** is the base/terminal state. You start here and end here.
-**`ExprCol<T>`** is reached after `.column()` -- operators and function wraps are available.
-**`ExprOp<T>`** is reached after an operator like `.eq()` -- values, columns, and subqueries are available.
+All expressions are built through `Expr<T>` -- a single chainable type. Start with `Expr::new()`, chain methods to build SQL, and call `.eval()` to finalize. Most query builder methods (`.filter()`, `.set()`, etc.) accept `Expr<T>` directly.
 
 ### Col Shorthand Methods
 
@@ -68,7 +58,7 @@ UC::Age.between(18i32, 65)   // "users".age BETWEEN $1 AND $2
 UC::Id.count().alias("total") // COUNT("users".id) AS total
 ```
 
-These return `Expr<T>` (or `ExprCol<T>` for aggregate wraps), ready to pass directly to `.filter()`, `.set()`, etc.
+These return `Expr<T>`, ready to pass directly to `.filter()`, `.set()`, etc.
 
 ### Full Expression Chaining
 
@@ -105,12 +95,12 @@ E::new().column(UC::Name).eq().raw("UPPER('test')")
 
 ### Col `.col()` Method
 
-When you need `ExprCol` directly (e.g. for JOINs or further chaining):
+When you need an `Expr<T>` starting from a column (e.g. for JOINs or further chaining):
 
 ```rust
-UC::Name.col()           // ExprCol<Users> -- can chain .eq(), .add(), .alias(), etc.
-UC::Name.col().cast("text")  // "users".name::text
-UC::Name.col().lower().alias("lname")  // LOWER("users".name) AS lname
+UC::Name.col()                       // Expr<Users> -- can chain .eq(), .add(), .alias(), etc.
+UC::Name.col().cast("text")          // "users".name::text
+UC::Name.col().lower().alias("lname") // LOWER("users".name) AS lname
 ```
 
 ## Query Building
@@ -171,7 +161,7 @@ SqlQ::select::<Users>()
     ])
 ```
 
-Available wraps on `ExprCol`: `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.lower()`, `.upper()`, `.length()`, `.trim()`, `.concat()`, `.substring()`, `.coalesce(fallback)`, `.cast("type")`, `.wrap_raw("FN_NAME")`.
+Available wraps on `Expr`: `.count()`, `.sum()`, `.avg()`, `.min()`, `.max()`, `.lower()`, `.upper()`, `.abs()`, `.date()`, `.unnest()`, `.length()`, `.trim()`, `.concat()`, `.substring()`, `.coalesce(fallback)`, `.greatest(other)`, `.least(other)`, `.cast("type")`, `.wrap_raw("FN_NAME")`.
 
 #### GROUP BY & HAVING
 
@@ -629,79 +619,65 @@ Methods on the generated `Col` enum that return `Expr<T>` (ready for `.filter()`
 
 ### Col Aggregate / Function Methods
 
-Methods that return `ExprCol<T>` (chain `.alias()`, `.eq()`, `.cast()`, etc.):
+Methods that return `Expr<T>` (chain `.alias()`, `.eq()`, `.cast()`, etc.):
 
-| Col method                     | SQL Output                                    |
-| ------------------------------ | --------------------------------------------- |
-| `Col::Id.count()`              | `COUNT("t".id)`                               |
-| `Col::Age.sum()`               | `SUM("t".age)`                                |
-| `Col::Age.avg()`               | `AVG("t".age)`                                |
-| `Col::Age.min()`               | `MIN("t".age)`                                |
-| `Col::Age.max()`               | `MAX("t".age)`                                |
-| `Col::Name.lower()`            | `LOWER("t".name)`                             |
-| `Col::Name.upper()`            | `UPPER("t".name)`                             |
-| `Col::Data.json_get(key)`      | `"t".data -> $1`                              |
-| `Col::Data.json_get_text(key)` | `"t".data ->> $1`                             |
-| `Col::Name.col()`              | `"t".name` (raw ExprCol for further chaining) |
-
-### ExprCol Methods
-
-Additional methods available after `.column()` or `.col()`:
-
-| Method                  | SQL Output          |
-| ----------------------- | ------------------- |
-| `.cast("text")`         | `::text` appended   |
-| `.coalesce(fallback)`   | `COALESCE(buf, $1)` |
-| `.length()`             | `LENGTH(buf)`       |
-| `.trim()`               | `TRIM(buf)`         |
-| `.concat()`             | `CONCAT(buf)`       |
-| `.substring()`          | `SUBSTRING(buf)`    |
-| `.json_path(path)`      | `buf #> $1`         |
-| `.json_path_text(path)` | `buf #>> $1`        |
-| `.wrap_raw("FN")`       | `FN(buf)`           |
-| `.alias("name")`        | `buf AS name`       |
+| Col method                     | SQL Output                            |
+| ------------------------------ | ------------------------------------- |
+| `Col::Id.count()`              | `COUNT("t".id)`                       |
+| `Col::Age.sum()`               | `SUM("t".age)`                        |
+| `Col::Age.avg()`               | `AVG("t".age)`                        |
+| `Col::Age.min()`               | `MIN("t".age)`                        |
+| `Col::Age.max()`               | `MAX("t".age)`                        |
+| `Col::Name.lower()`            | `LOWER("t".name)`                     |
+| `Col::Name.upper()`            | `UPPER("t".name)`                     |
+| `Col::Age.abs()`               | `ABS("t".age)`                        |
+| `Col::CreatedAt.date()`        | `DATE("t".created_at)`                |
+| `Col::Data.json_get(key)`      | `"t".data -> $1`                      |
+| `Col::Data.json_get_text(key)` | `"t".data ->> $1`                     |
+| `Col::Name.col()`              | `"t".name` (Expr for further chaining)|
 
 ### Expr Methods
 
-Methods on `Expr<T>` (base/terminal state):
+All methods are on `Expr<T>` — a single chainable type:
 
-| Method                       | Effect                          |
-| ---------------------------- | ------------------------------- |
-| `.column(col)`               | Append `"table".col` -> ExprCol |
-| `.val(v)`                    | Append `$#` with bound param    |
-| `.now()`                     | Append `NOW()`                  |
-| `.null()`                    | Append `NULL`                   |
-| `.true_()` / `.false_()`     | Append `TRUE` / `FALSE`         |
-| `.raw(s)`                    | Append raw SQL                  |
-| `.and()`                     | Wrap in `()`, append `AND`      |
-| `.or()`                      | Wrap in `()`, append `OR`       |
-| `.and_bare()` / `.or_bare()` | Append `AND` / `OR` (no wrap)   |
-| `.not()`                     | Prepend `NOT `                  |
-| `.paren()`                   | Wrap buffer in `()`             |
-| `.cast("type")`              | Append `::type`                 |
-| `.wrap_raw("FN")`            | Wrap as `FN(buf)`               |
-| `.if_(condition)`            | Start `CASE WHEN ...` -> ExprIf |
-| `.exists(sub)`               | Append `EXISTS (subquery)`      |
-| `.not_exists(sub)`           | Append `NOT EXISTS (subquery)`  |
-| `.select(sub)`               | Append `(subquery)`             |
-| `.greatest(val)`             | `GREATEST(self, $1)`            |
-| `.least(val)`                | `LEAST(self, $1)`               |
-
-### ExprOp Methods
-
-Methods available after an operator (`.eq()`, `.add()`, etc.):
-
-| Method              | Effect                                    |
-| ------------------- | ----------------------------------------- |
-| `.column(col)`      | Append column ref -> ExprCol              |
-| `.column_of::<U>()` | Append column ref from another table `U`  |
-| `.val(v)`           | Append bound param -> Expr                |
-| `.now()`            | Append `NOW()` -> Expr                    |
-| `.null()`           | Append `NULL` -> Expr                     |
-| `.raw(s)`           | Append raw SQL -> Expr                    |
-| `.expr(e)`          | Splice another expression's SQL and binds |
-| `.select(sub)`      | Append `(subquery)` -> Expr               |
-| `.if_(cond)`        | Start `CASE WHEN ...` -> ExprIf           |
+| Method                       | Effect                             |
+| ---------------------------- | ---------------------------------- |
+| `.column(col)`               | Append `"table".col`               |
+| `.column_of::<U>(col)`       | Append column ref from table `U`   |
+| `.val(v)`                    | Append bound param or expression   |
+| `.now()`                     | Append `NOW()`                     |
+| `.null()`                    | Append `NULL`                      |
+| `.true_()` / `.false_()`     | Append `TRUE` / `FALSE`            |
+| `.raw(s)`                    | Append raw SQL                     |
+| `.eq()` / `.neq()`           | Append ` = ` / ` != `             |
+| `.gt()` / `.gte()`           | Append ` > ` / ` >= `             |
+| `.lt()` / `.lte()`           | Append ` < ` / ` <= `             |
+| `.add()` / `.sub()`          | Append ` + ` / ` - `              |
+| `.mul()` / `.div()`          | Append ` * ` / ` / `              |
+| `.and()` / `.or()`           | Wrap in `()`, append `AND` / `OR`  |
+| `.and_bare()` / `.or_bare()` | Append `AND` / `OR` (no wrap)      |
+| `.not()`                     | Prepend `NOT `                     |
+| `.paren()`                   | Wrap buffer in `()`                |
+| `.cast("type")`              | Append `::type`                    |
+| `.alias("name")`             | Append `AS name`                   |
+| `.count()` / `.sum()` / etc. | Wrap as `FN(buf)`                  |
+| `.greatest(other)`           | `GREATEST(self, other)`            |
+| `.least(other)`              | `LEAST(self, other)`               |
+| `.coalesce(fallback)`        | `COALESCE(buf, fallback)`          |
+| `.wrap_raw("FN")`            | Wrap as `FN(buf)`                  |
+| `.in_(v)` / `.not_in(v)`     | `IN ($1)` / `NOT IN ($1)`         |
+| `.any(v)` / `.all(v)`        | `= ANY($1)` / `= ALL($1)`         |
+| `.like(v)` / `.ilike(v)`     | `LIKE $1` / `ILIKE $1`            |
+| `.between(lo, hi)`           | `BETWEEN $1 AND $2`               |
+| `.is_null()` / `.is_not_null()` | `IS NULL` / `IS NOT NULL`       |
+| `.in_select(sub)`            | `IN (SELECT ...)`                  |
+| `.not_in_select(sub)`        | `NOT IN (SELECT ...)`              |
+| `.exists(sub)`               | `EXISTS (subquery)`                |
+| `.not_exists(sub)`           | `NOT EXISTS (subquery)`            |
+| `.select(sub)`               | Append `(subquery)`                |
+| `.expr(e)`                   | Splice expression's SQL and binds  |
+| `.func(name, prefix, v)`     | `name(prefix $1)`                  |
+| `.if_(condition)`            | Start `CASE WHEN ...` -> ExprIf    |
 
 ## Error Handling
 

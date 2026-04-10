@@ -22,7 +22,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 /// // Usage:
 /// CurrencyCol::Name.eq("USD")
 /// CurrencyCol::Id.count().alias("total")
-/// CurrencyCol::Name.into() // Expr<Currency> via From (through ExprCol)
+/// CurrencyCol::Name.into() // Expr<Currency> via From
 /// ```
 #[proc_macro_derive(SqlCols)]
 pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
@@ -68,7 +68,7 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
 
         impl From<#enum_name> for ::sql_query::Expr<#struct_name> {
             fn from(col: #enum_name) -> Self {
-                ::sql_query::Expr::new().column(col).into()
+                ::sql_query::Expr::new().column(col)
             }
         }
 
@@ -141,23 +141,23 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::is_not_null(self)
             }
 
-            pub fn count(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn count(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::count(self)
             }
 
-            pub fn sum(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn sum(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::sum(self)
             }
 
-            pub fn avg(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn avg(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::avg(self)
             }
 
-            pub fn min(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn min(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::min(self)
             }
 
-            pub fn max(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn max(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::max(self)
             }
 
@@ -169,27 +169,27 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::least(self, other)
             }
 
-            pub fn lower(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn lower(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::lower(self)
             }
 
-            pub fn upper(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn upper(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::upper(self)
             }
 
-            pub fn abs(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn abs(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::abs(self)
             }
 
-            pub fn date(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn date(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::date(self)
             }
 
-            pub fn json_get(self, key: impl ::sql_query::EvalExpr) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn json_get(self, key: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::json_get(self, key)
             }
 
-            pub fn json_get_text(self, key: impl ::sql_query::EvalExpr) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn json_get_text(self, key: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::json_get_text(self, key)
             }
 
@@ -201,7 +201,7 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::jsonb_text_eq(self, key, val)
             }
 
-            pub fn col(self) -> ::sql_query::ExprCol<#struct_name> {
+            pub fn col(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::col(self)
             }
         }
