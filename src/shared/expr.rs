@@ -837,6 +837,26 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
         Expr::new().column(self).lte(val)
     }
 
+    /// `"table".col + val`
+    fn add(self, val: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).add(val)
+    }
+
+    /// `"table".col - val`
+    fn sub(self, val: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).sub(val)
+    }
+
+    /// `"table".col * val`
+    fn mul(self, val: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).mul(val)
+    }
+
+    /// `"table".col / val`
+    fn div(self, val: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).div(val)
+    }
+
     /// `"table".col LIKE val`
     fn like(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).like(val)
@@ -1015,6 +1035,21 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
     /// `UNNEST("table".col)`
     fn unnest(self) -> Expr<T> {
         Expr::new().column(self).unnest()
+    }
+
+    /// `name("table".col)` — escape hatch for SQL functions not yet built in.
+    fn wrap_raw(self, name: &str) -> Expr<T> {
+        Expr::new().column(self).wrap_raw(name)
+    }
+
+    /// Append `FILTER (WHERE condition)` after an aggregate.
+    fn filter(self, condition: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).filter(condition)
+    }
+
+    /// Append `OVER (window_spec)` after an aggregate or window function.
+    fn over(self, spec: WindowSpec) -> Expr<T> {
+        Expr::new().column(self).over(spec)
     }
 
     /// `LAG("table".col)`

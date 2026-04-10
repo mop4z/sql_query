@@ -105,6 +105,22 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::lte(self, val)
             }
 
+            pub fn add(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::add(self, val)
+            }
+
+            pub fn sub(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::sub(self, val)
+            }
+
+            pub fn mul(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::mul(self, val)
+            }
+
+            pub fn div(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::div(self, val)
+            }
+
             pub fn like(self, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::like(self, val)
             }
@@ -247,6 +263,18 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
 
             pub fn unnest(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::unnest(self)
+            }
+
+            pub fn wrap_raw(self, name: &str) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::wrap_raw(self, name)
+            }
+
+            pub fn filter(self, condition: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::filter(self, condition)
+            }
+
+            pub fn over(self, spec: ::sql_query::WindowSpec) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::over(self, spec)
             }
 
             pub fn lag(self) -> ::sql_query::Expr<#struct_name> {
