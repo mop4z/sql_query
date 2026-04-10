@@ -33,38 +33,38 @@ fn eval(e: Expr<TestTable>) -> (String, Vec<SqlParam>) {
 
 #[test]
 fn column_eq_val() {
-    let (sql, binds) = eval(E::new().column(TC::Name).eq().val("alice"));
+    let (sql, binds) = eval(E::new().column(TC::Name).eq("alice"));
     assert_eq!(sql, r#""test_table".name = $#"#);
     assert_eq!(binds, vec![SqlParam::String("alice".into())]);
 }
 
 #[test]
 fn column_neq_val() {
-    let (sql, _) = eval(E::new().column(TC::Name).neq().val("bob"));
+    let (sql, _) = eval(E::new().column(TC::Name).neq("bob"));
     assert_eq!(sql, r#""test_table".name != $#"#);
 }
 
 #[test]
 fn column_gt_val() {
-    let (sql, _) = eval(E::new().column(TC::Age).gt().val(SqlParam::I32(18)));
+    let (sql, _) = eval(E::new().column(TC::Age).gt(SqlParam::I32(18)));
     assert_eq!(sql, r#""test_table".age > $#"#);
 }
 
 #[test]
 fn column_gte_val() {
-    let (sql, _) = eval(E::new().column(TC::Age).gte().val(SqlParam::I32(18)));
+    let (sql, _) = eval(E::new().column(TC::Age).gte(SqlParam::I32(18)));
     assert_eq!(sql, r#""test_table".age >= $#"#);
 }
 
 #[test]
 fn column_lt_val() {
-    let (sql, _) = eval(E::new().column(TC::Age).lt().val(SqlParam::I32(18)));
+    let (sql, _) = eval(E::new().column(TC::Age).lt(SqlParam::I32(18)));
     assert_eq!(sql, r#""test_table".age < $#"#);
 }
 
 #[test]
 fn column_lte_val() {
-    let (sql, _) = eval(E::new().column(TC::Age).lte().val(SqlParam::I32(18)));
+    let (sql, _) = eval(E::new().column(TC::Age).lte(SqlParam::I32(18)));
     assert_eq!(sql, r#""test_table".age <= $#"#);
 }
 
@@ -73,7 +73,7 @@ fn column_lte_val() {
 #[test]
 fn self_ref_add() {
     let (sql, binds) =
-        eval(E::new().column(TC::Age).eq().column(TC::Age).add().val(SqlParam::I32(1)));
+        eval(E::new().column(TC::Age).eq(E::new().column(TC::Age).add(SqlParam::I32(1))));
     assert_eq!(sql, r#""test_table".age = "test_table".age + $#"#);
     assert_eq!(binds, vec![SqlParam::I32(1)]);
 }
@@ -81,21 +81,21 @@ fn self_ref_add() {
 #[test]
 fn self_ref_sub() {
     let (sql, _) =
-        eval(E::new().column(TC::Age).eq().column(TC::Age).sub().val(SqlParam::I32(5)));
+        eval(E::new().column(TC::Age).eq(E::new().column(TC::Age).sub(SqlParam::I32(5))));
     assert_eq!(sql, r#""test_table".age = "test_table".age - $#"#);
 }
 
 #[test]
 fn self_ref_mul() {
     let (sql, _) =
-        eval(E::new().column(TC::Age).eq().column(TC::Age).mul().val(SqlParam::I32(2)));
+        eval(E::new().column(TC::Age).eq(E::new().column(TC::Age).mul(SqlParam::I32(2))));
     assert_eq!(sql, r#""test_table".age = "test_table".age * $#"#);
 }
 
 #[test]
 fn self_ref_div() {
     let (sql, _) =
-        eval(E::new().column(TC::Age).eq().column(TC::Age).div().val(SqlParam::I32(3)));
+        eval(E::new().column(TC::Age).eq(E::new().column(TC::Age).div(SqlParam::I32(3))));
     assert_eq!(sql, r#""test_table".age = "test_table".age / $#"#);
 }
 
@@ -103,14 +103,14 @@ fn self_ref_div() {
 
 #[test]
 fn eq_now() {
-    let (sql, binds) = eval(E::new().column(TC::CreatedAt).eq().now());
+    let (sql, binds) = eval(E::new().column(TC::CreatedAt).eq(E::new().now()));
     assert_eq!(sql, r#""test_table".created_at = NOW()"#);
     assert!(binds.is_empty());
 }
 
 #[test]
 fn eq_null() {
-    let (sql, _) = eval(E::new().column(TC::Email).eq().null());
+    let (sql, _) = eval(E::new().column(TC::Email).eq(E::new().null()));
     assert_eq!(sql, r#""test_table".email = NULL"#);
 }
 
@@ -173,8 +173,7 @@ fn ilike_pattern() {
 
 #[test]
 fn between_range() {
-    let (sql, binds) =
-        eval(E::new().column(TC::Age).between(SqlParam::I32(10), SqlParam::I32(20)));
+    let (sql, binds) = eval(E::new().column(TC::Age).between(SqlParam::I32(10), SqlParam::I32(20)));
     assert_eq!(sql, r#""test_table".age BETWEEN $# AND $#"#);
     assert_eq!(binds, vec![SqlParam::I32(10), SqlParam::I32(20)]);
 }
@@ -243,46 +242,28 @@ fn raw_pass_through() {
 
 #[test]
 fn and_chain() {
-    let (sql, _) = eval(
-        E::new()
-            .column(TC::Name)
-            .eq()
-            .val("alice")
-            .and()
-            .column(TC::Age)
-            .gt()
-            .val(SqlParam::I32(18)),
-    );
+    let (sql, _) =
+        eval(E::new().column(TC::Name).eq("alice").and().column(TC::Age).gt(SqlParam::I32(18)));
     assert_eq!(sql, r#"("test_table".name = $#) AND "test_table".age > $#"#);
 }
 
 #[test]
 fn or_chain() {
-    let (sql, _) =
-        eval(E::new().column(TC::Name).eq().val("alice").or().column(TC::Name).eq().val("bob"));
+    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").or().column(TC::Name).eq("bob"));
     assert_eq!(sql, r#"("test_table".name = $#) OR "test_table".name = $#"#);
 }
 
 #[test]
 fn and_bare_chain() {
     let (sql, _) = eval(
-        E::new()
-            .column(TC::Name)
-            .eq()
-            .val("alice")
-            .and_bare()
-            .column(TC::Age)
-            .gt()
-            .val(SqlParam::I32(18)),
+        E::new().column(TC::Name).eq("alice").and_bare().column(TC::Age).gt(SqlParam::I32(18)),
     );
     assert_eq!(sql, r#""test_table".name = $# AND "test_table".age > $#"#);
 }
 
 #[test]
 fn or_bare_chain() {
-    let (sql, _) = eval(
-        E::new().column(TC::Name).eq().val("alice").or_bare().column(TC::Name).eq().val("bob"),
-    );
+    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").or_bare().column(TC::Name).eq("bob"));
     assert_eq!(sql, r#""test_table".name = $# OR "test_table".name = $#"#);
 }
 
@@ -297,12 +278,10 @@ fn not_expr() {
 #[test]
 fn if_then_else() {
     let (sql, binds) = eval(
-        E::new()
-            .column(TC::Name)
-            .eq()
+        E::new().column(TC::Name).eq(E::new()
             .if_(E::new().val(SqlParam::Bool(true)))
-            .then_(E::new().val(SqlParam::String("yes".into())))
-            .else_(E::new().null()),
+            .then_(SqlParam::String("yes".into()))
+            .else_(E::new().null())),
     );
     assert_eq!(sql, r#""test_table".name = CASE WHEN $# THEN $# ELSE NULL END"#);
     assert_eq!(binds, vec![SqlParam::Bool(true), SqlParam::String("yes".into())]);
@@ -311,12 +290,10 @@ fn if_then_else() {
 #[test]
 fn if_then_else_with_column() {
     let (sql, binds) = eval(
-        E::new()
-            .column(TC::CreatedAt)
-            .eq()
+        E::new().column(TC::CreatedAt).eq(E::new()
             .if_(E::new().val(SqlParam::Bool(true)))
-            .then_(E::new().column(TC::CreatedAt))
-            .else_(E::new().null()),
+            .then_(TC::CreatedAt)
+            .else_(E::new().null())),
     );
     assert_eq!(
         sql,
@@ -406,7 +383,7 @@ fn not_exists_subquery() {
 
 #[test]
 fn into_col_and_val_splits() {
-    let e = E::new().column(TC::Name).eq().val("alice");
+    let e = E::new().column(TC::Name).eq("alice");
     let (col, val_sql, binds) = e.into_col_and_val();
     assert_eq!(col, Some("name".to_string()));
     assert_eq!(val_sql, "$#");
@@ -440,17 +417,8 @@ fn cast_on_col() {
 
 #[test]
 fn paren_wrap() {
-    let (sql, _) = eval(
-        E::new()
-            .column(TC::Name)
-            .eq()
-            .val("a")
-            .or_bare()
-            .column(TC::Name)
-            .eq()
-            .val("b")
-            .paren(),
-    );
+    let (sql, _) =
+        eval(E::new().column(TC::Name).eq("a").or_bare().column(TC::Name).eq("b").paren());
     assert_eq!(sql, r#"("test_table".name = $# OR "test_table".name = $#)"#);
 }
 
@@ -520,12 +488,10 @@ fn least_val() {
 #[test]
 fn greatest_in_case_when() {
     let (sql, binds) = eval(
-        E::new()
-            .column(TC::CreatedAt)
-            .eq()
+        E::new().column(TC::CreatedAt).eq(E::new()
             .if_(E::new().val(SqlParam::Bool(true)))
             .then_(TC::CreatedAt.greatest(SqlParam::String("ts".into())))
-            .else_(E::new().null()),
+            .else_(E::new().null())),
     );
     assert_eq!(
         sql,
@@ -549,7 +515,7 @@ fn from_sql_param() {
 #[test]
 fn expr_splices_inner() {
     let inner = E::new().column(TC::Name).greatest(SqlParam::I32(24));
-    let (sql, binds) = eval(E::new().column(TC::Name).eq().expr(inner));
+    let (sql, binds) = eval(E::new().column(TC::Name).eq(inner));
     assert_eq!(sql, r#""test_table".name = GREATEST("test_table".name, $#)"#);
     assert_eq!(binds, vec![SqlParam::I32(24)]);
 }
@@ -566,7 +532,7 @@ fn func_on_expr() {
 #[test]
 fn func_after_eq() {
     let (sql, binds) =
-        eval(E::new().column(TC::Age).eq().func("make_interval", "hours => ", 5i32));
+        eval(E::new().column(TC::Age).eq(E::new().func("make_interval", "hours => ", 5i32)));
     assert_eq!(sql, r#""test_table".age = make_interval(hours => $#)"#);
     assert_eq!(binds, vec![SqlParam::I32(5)]);
 }
@@ -575,13 +541,9 @@ fn func_after_eq() {
 
 #[test]
 fn row_number_over_partition_order() {
-    let (sql, _) = eval(
-        E::row_number().over(
-            WindowSpec::new()
-                .partition_by(TC::Name.col())
-                .order_by(TC::Age.col(), SqlOrder::Desc),
-        ),
-    );
+    let (sql, _) = eval(E::row_number().over(
+        WindowSpec::new().partition_by(TC::Name.col()).order_by(TC::Age.col(), SqlOrder::Desc),
+    ));
     assert_eq!(
         sql,
         r#"ROW_NUMBER() OVER (PARTITION BY "test_table".name ORDER BY "test_table".age DESC)"#,
@@ -596,9 +558,7 @@ fn sum_over_empty() {
 
 #[test]
 fn rank_over_order_only() {
-    let (sql, _) = eval(
-        E::rank().over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Asc)),
-    );
+    let (sql, _) = eval(E::rank().over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Asc)));
     assert_eq!(sql, r#"RANK() OVER (ORDER BY "test_table".age ASC)"#);
 }
 
@@ -618,13 +578,9 @@ fn count_over_multiple_partitions() {
 
 #[test]
 fn lag_over() {
-    let (sql, _) = eval(
-        E::lag(TC::Age.col()).over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Asc)),
-    );
-    assert_eq!(
-        sql,
-        r#"LAG("test_table".age) OVER (ORDER BY "test_table".age ASC)"#,
-    );
+    let (sql, _) =
+        eval(E::lag(TC::Age.col()).over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Asc)));
+    assert_eq!(sql, r#"LAG("test_table".age) OVER (ORDER BY "test_table".age ASC)"#,);
 }
 
 #[test]
@@ -664,8 +620,5 @@ fn window_with_alias() {
             .over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Desc))
             .alias("rank"),
     );
-    assert_eq!(
-        sql,
-        r#"DENSE_RANK() OVER (ORDER BY "test_table".age DESC) AS rank"#,
-    );
+    assert_eq!(sql, r#"DENSE_RANK() OVER (ORDER BY "test_table".age DESC) AS rank"#,);
 }

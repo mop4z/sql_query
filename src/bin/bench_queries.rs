@@ -67,7 +67,6 @@ impl Table for Orders {
 
 type UExpr = Expr<Users>;
 
-
 fn build_to_sql(q: impl SqlBase) -> (String, Vec<SqlParam>) {
     q.build().unwrap().into_raw()
 }
@@ -100,10 +99,7 @@ fn bench_expr_arithmetic() {
     black_box(
         UExpr::new()
             .column(UsersCol::Age)
-            .eq()
-            .column(UsersCol::Age)
-            .add()
-            .val(1i32)
+            .eq(UExpr::new().column(UsersCol::Age).add(1i32))
             .eval()
             .unwrap(),
     );
@@ -153,7 +149,7 @@ fn bench_select_with_group_by() {
         SqlQ::select::<Users>()
             .from([UExpr::from(UsersCol::Age), UsersCol::Id.count().alias("count")])
             .group_by([UExpr::new().column(UsersCol::Age)])
-            .having([UExpr::new().column(UsersCol::Id).count().gt().val(5i32)]),
+            .having([UExpr::new().column(UsersCol::Id).count().gt(5i32)]),
     ));
 }
 
@@ -229,12 +225,10 @@ fn bench_complex_expr() {
     black_box(
         UExpr::new()
             .column(UsersCol::Age)
-            .gte()
-            .val(18i32)
+            .gte(18i32)
             .and()
             .column(UsersCol::Name)
-            .neq()
-            .val("admin")
+            .neq("admin")
             .and()
             .column(UsersCol::Email)
             .ilike("%@company.com")

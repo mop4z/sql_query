@@ -469,7 +469,8 @@ mod tests {
     #[test]
     fn filter_with_val_fn_now_no_bind() {
         let (sql, binds) = build(
-            SqlSelect::new::<Users>().filter([UExpr::new().column(UsersCol::Name).eq().now()]),
+            SqlSelect::new::<Users>()
+                .filter([UExpr::new().column(UsersCol::Name).eq(UExpr::new().now())]),
         );
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = NOW()"#);
         assert!(binds.is_empty());
@@ -479,7 +480,7 @@ mod tests {
     fn filter_with_val_fn_true_no_bind() {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
-                .filter([UExpr::new().column(UsersCol::Name).eq().raw("TRUE")]),
+                .filter([UExpr::new().column(UsersCol::Name).eq(UExpr::new().raw("TRUE"))]),
         );
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = TRUE"#);
         assert!(binds.is_empty());
@@ -490,8 +491,7 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>().filter([UExpr::new()
                 .column(UsersCol::Name)
-                .eq()
-                .val(SqlParam::String("alice".into()))
+                .eq(SqlParam::String("alice".into()))
                 .wrap_raw("LOWER")]),
         );
         assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND LOWER("users".name = $1)"#);
@@ -507,7 +507,7 @@ mod tests {
                     UsersCol::Id.count().alias("count"),
                 ])
                 .group_by([UExpr::new().column(UsersCol::Age)])
-                .having([UsersCol::Id.count().eq().val(SqlParam::I32(5))]),
+                .having([UsersCol::Id.count().eq(SqlParam::I32(5))]),
         );
         assert_eq!(
             sql,
@@ -526,7 +526,7 @@ mod tests {
                 ])
                 .filter([UsersCol::Name.eq("alice")])
                 .group_by([UExpr::new().column(UsersCol::Age)])
-                .having([UsersCol::Id.count().eq().val(SqlParam::I32(3))]),
+                .having([UsersCol::Id.count().eq(SqlParam::I32(3))]),
         );
         assert_eq!(
             sql,
@@ -679,8 +679,7 @@ mod tests {
                 .eq("alice")
                 .or()
                 .column(UsersCol::Name)
-                .eq()
-                .val("bob")]),
+                .eq("bob")]),
         );
         assert_eq!(
             sql,
@@ -692,7 +691,7 @@ mod tests {
     #[test]
     fn filter_or_with_other_filters() {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([
-            UsersCol::Name.eq("alice").or().column(UsersCol::Name).eq().val("bob"),
+            UsersCol::Name.eq("alice").or().column(UsersCol::Name).eq("bob"),
             UsersCol::Age.gte(18i32),
         ]));
         assert_eq!(

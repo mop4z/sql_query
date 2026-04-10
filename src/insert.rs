@@ -380,9 +380,7 @@ mod tests {
             .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)])
             .filter([UsersCol::Age.gt(18i32)]);
         let (sql, binds) = build(
-            SqlInsert::<Users>::new()
-                .from_select([UsersCol::Name, UsersCol::Age], select)
-                .unwrap(),
+            SqlInsert::<Users>::new().from_select([UsersCol::Name, UsersCol::Age], select).unwrap(),
         );
         assert_eq!(
             sql,
@@ -426,8 +424,8 @@ mod tests {
 
     #[test]
     fn err_from_select_after_values() {
-        let select = crate::select::SqlSelect::new::<Users>()
-            .from([UExpr::new().column(UsersCol::Name)]);
+        let select =
+            crate::select::SqlSelect::new::<Users>().from([UExpr::new().column(UsersCol::Name)]);
         let result = SqlInsert::<Users>::new()
             .values([UsersCol::Name.eq("alice")])
             .unwrap()
@@ -437,8 +435,8 @@ mod tests {
 
     #[test]
     fn err_values_after_from_select() {
-        let select = crate::select::SqlSelect::new::<Users>()
-            .from([UExpr::new().column(UsersCol::Name)]);
+        let select =
+            crate::select::SqlSelect::new::<Users>().from([UExpr::new().column(UsersCol::Name)]);
         let result = SqlInsert::<Users>::new()
             .from_select([UsersCol::Name], select)
             .unwrap()

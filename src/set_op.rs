@@ -60,12 +60,10 @@ impl SqlSetOp {
     }
 
     fn with_kind(first: SqlSelect, kind: SetOpKind, second: SqlSelect) -> Self {
-        let (first_sql, first_binds) = SqlBase::build(first)
-            .expect("set op: first query build failed")
-            .into_raw();
-        let (second_sql, second_binds) = SqlBase::build(second)
-            .expect("set op: second query build failed")
-            .into_raw();
+        let (first_sql, first_binds) =
+            SqlBase::build(first).expect("set op: first query build failed").into_raw();
+        let (second_sql, second_binds) =
+            SqlBase::build(second).expect("set op: second query build failed").into_raw();
         Self {
             first_sql,
             first_binds,
@@ -77,9 +75,7 @@ impl SqlSetOp {
     }
 
     fn push(mut self, kind: SetOpKind, other: SqlSelect) -> Self {
-        let (sql, binds) = SqlBase::build(other)
-            .expect("set op: query build failed")
-            .into_raw();
+        let (sql, binds) = SqlBase::build(other).expect("set op: query build failed").into_raw();
         self.rest.push((kind, sql, binds));
         self
     }
@@ -160,9 +156,9 @@ impl SqlBase for SqlSetOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SqlCols, define_id};
     use crate::shared::Table;
     use crate::shared::expr::Expr;
+    use crate::{SqlCols, define_id};
     use sqlx::FromRow;
 
     define_id!(TestId);
@@ -205,10 +201,7 @@ mod tests {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, _) = build(q1.union_all(q2));
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" UNION ALL SELECT * FROM "users""#,
-        );
+        assert_eq!(sql, r#"SELECT * FROM "users" UNION ALL SELECT * FROM "users""#,);
     }
 
     #[test]
@@ -216,10 +209,7 @@ mod tests {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, _) = build(q1.intersect(q2));
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" INTERSECT SELECT * FROM "users""#,
-        );
+        assert_eq!(sql, r#"SELECT * FROM "users" INTERSECT SELECT * FROM "users""#,);
     }
 
     #[test]
@@ -227,19 +217,14 @@ mod tests {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, _) = build(q1.except(q2));
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" EXCEPT SELECT * FROM "users""#,
-        );
+        assert_eq!(sql, r#"SELECT * FROM "users" EXCEPT SELECT * FROM "users""#,);
     }
 
     #[test]
     fn union_different_bind_counts() {
         let q1 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]);
-        let q2 = SqlSelect::new::<Users>().filter([
-            UsersCol::Name.eq("bob"),
-            UsersCol::Age.gt(18i32),
-        ]);
+        let q2 =
+            SqlSelect::new::<Users>().filter([UsersCol::Name.eq("bob"), UsersCol::Age.gt(18i32)]);
         let (sql, binds) = build(q1.union(q2));
         assert_eq!(
             sql,
@@ -305,10 +290,7 @@ mod tests {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, binds) = build(q1.union(q2));
-        assert_eq!(
-            sql,
-            r#"SELECT * FROM "users" UNION SELECT * FROM "users""#,
-        );
+        assert_eq!(sql, r#"SELECT * FROM "users" UNION SELECT * FROM "users""#,);
         assert!(binds.is_empty());
     }
 }

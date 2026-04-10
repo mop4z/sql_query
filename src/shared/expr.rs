@@ -186,65 +186,75 @@ impl<T: Table> Expr<T> {
 
     // -- comparison operators ------------------------------------------------
 
-    /// Append ` = `.
-    pub fn eq(mut self) -> Self {
+    /// Append ` = val`.
+    pub fn eq(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" = ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` != `.
-    pub fn neq(mut self) -> Self {
+    /// Append ` != val`.
+    pub fn neq(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" != ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` > `.
-    pub fn gt(mut self) -> Self {
+    /// Append ` > val`.
+    pub fn gt(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" > ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` >= `.
-    pub fn gte(mut self) -> Self {
+    /// Append ` >= val`.
+    pub fn gte(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" >= ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` < `.
-    pub fn lt(mut self) -> Self {
+    /// Append ` < val`.
+    pub fn lt(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" < ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` <= `.
-    pub fn lte(mut self) -> Self {
+    /// Append ` <= val`.
+    pub fn lte(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" <= ");
+        self.0.push_eval(val);
         self
     }
 
     // -- arithmetic operators ------------------------------------------------
 
-    /// Append ` + `.
-    pub fn add(mut self) -> Self {
+    /// Append ` + val`.
+    pub fn add(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" + ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` - `.
-    pub fn sub(mut self) -> Self {
+    /// Append ` - val`.
+    pub fn sub(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" - ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` * `.
-    pub fn mul(mut self) -> Self {
+    /// Append ` * val`.
+    pub fn mul(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" * ");
+        self.0.push_eval(val);
         self
     }
 
-    /// Append ` / `.
-    pub fn div(mut self) -> Self {
+    /// Append ` / val`.
+    pub fn div(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" / ");
+        self.0.push_eval(val);
         self
     }
 
@@ -799,32 +809,32 @@ impl<T: Table> From<SqlParam> for Expr<T> {
 pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
     /// `"table".col = val`
     fn eq(self, val: impl EvalExpr) -> Expr<T> {
-        Expr::new().column(self).eq().val(val)
+        Expr::new().column(self).eq(val)
     }
 
     /// `"table".col != val`
     fn neq(self, val: impl EvalExpr) -> Expr<T> {
-        Expr::new().column(self).neq().val(val)
+        Expr::new().column(self).neq(val)
     }
 
     /// `"table".col > val`
     fn gt(self, val: impl EvalExpr) -> Expr<T> {
-        Expr::new().column(self).gt().val(val)
+        Expr::new().column(self).gt(val)
     }
 
     /// `"table".col >= val`
     fn gte(self, val: impl EvalExpr) -> Expr<T> {
-        Expr::new().column(self).gte().val(val)
+        Expr::new().column(self).gte(val)
     }
 
     /// `"table".col < val`
     fn lt(self, val: impl EvalExpr) -> Expr<T> {
-        Expr::new().column(self).lt().val(val)
+        Expr::new().column(self).lt(val)
     }
 
     /// `"table".col <= val`
     fn lte(self, val: impl EvalExpr) -> Expr<T> {
-        Expr::new().column(self).lte().val(val)
+        Expr::new().column(self).lte(val)
     }
 
     /// `"table".col LIKE val`
@@ -952,6 +962,81 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
         Expr::new().column(self).jsonb_text_eq(key, val)
     }
 
+    /// `"table".col #> path` — JSON path access, returns JSON.
+    fn json_path(self, path: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).json_path(path)
+    }
+
+    /// `"table".col #>> path` — JSON path access, returns text.
+    fn json_path_text(self, path: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).json_path_text(path)
+    }
+
+    /// `"table".col AS name`
+    fn alias(self, name: &str) -> Expr<T> {
+        Expr::new().column(self).alias(name)
+    }
+
+    /// `"table".col::ty`
+    fn cast(self, ty: &str) -> Expr<T> {
+        Expr::new().column(self).cast(ty)
+    }
+
+    /// `COALESCE("table".col, fallback)`
+    fn coalesce(self, fallback: impl EvalExpr) -> Expr<T> {
+        Expr::new().column(self).coalesce(fallback)
+    }
+
+    /// `ROUND("table".col, precision)`
+    fn round(self, precision: i32) -> Expr<T> {
+        Expr::new().column(self).round(precision)
+    }
+
+    /// `CONCAT("table".col)`
+    fn concat(self) -> Expr<T> {
+        Expr::new().column(self).concat()
+    }
+
+    /// `LENGTH("table".col)`
+    fn length(self) -> Expr<T> {
+        Expr::new().column(self).length()
+    }
+
+    /// `TRIM("table".col)`
+    fn trim(self) -> Expr<T> {
+        Expr::new().column(self).trim()
+    }
+
+    /// `SUBSTRING("table".col)`
+    fn substring(self) -> Expr<T> {
+        Expr::new().column(self).substring()
+    }
+
+    /// `UNNEST("table".col)`
+    fn unnest(self) -> Expr<T> {
+        Expr::new().column(self).unnest()
+    }
+
+    /// `LAG("table".col)`
+    fn lag(self) -> Expr<T> {
+        Expr::lag(self.col())
+    }
+
+    /// `LEAD("table".col)`
+    fn lead(self) -> Expr<T> {
+        Expr::lead(self.col())
+    }
+
+    /// `FIRST_VALUE("table".col)`
+    fn first_value(self) -> Expr<T> {
+        Expr::first_value(self.col())
+    }
+
+    /// `LAST_VALUE("table".col)`
+    fn last_value(self) -> Expr<T> {
+        Expr::last_value(self.col())
+    }
+
     /// Start an `Expr<T>` from this column for further chaining.
     fn col(self) -> Expr<T> {
         Expr::new().column(self)
@@ -967,9 +1052,8 @@ pub struct ExprIf<T: Table>(ExprBuf<T>);
 
 impl<T: Table> ExprIf<T> {
     /// Append ` THEN val`. Must call `.else_()` after this.
-    pub fn then_(mut self, val: impl Into<Expr<T>>) -> ExprThen<T> {
-        let expr: Expr<T> = val.into();
-        let (sql, binds) = expr.0.eval().unwrap();
+    pub fn then_(mut self, val: impl EvalExpr) -> ExprThen<T> {
+        let (sql, binds) = val.eval().unwrap();
         self.0.push(" THEN ");
         self.0.push(&sql);
         self.0.binds.extend(binds);
@@ -982,9 +1066,8 @@ pub struct ExprThen<T: Table>(ExprBuf<T>);
 
 impl<T: Table> ExprThen<T> {
     /// Append ` ELSE val END` and return the completed expression.
-    pub fn else_(mut self, val: impl Into<Expr<T>>) -> Expr<T> {
-        let expr: Expr<T> = val.into();
-        let (sql, binds) = expr.0.eval().unwrap();
+    pub fn else_(mut self, val: impl EvalExpr) -> Expr<T> {
+        let (sql, binds) = val.eval().unwrap();
         self.0.push(" ELSE ");
         self.0.push(&sql);
         self.0.binds.extend(binds);
@@ -1039,12 +1122,7 @@ pub struct WindowSpec {
 
 impl WindowSpec {
     pub fn new() -> Self {
-        Self {
-            partition_by: Vec::new(),
-            order_by: Vec::new(),
-            binds: Vec::new(),
-            frame: None,
-        }
+        Self { partition_by: Vec::new(), order_by: Vec::new(), binds: Vec::new(), frame: None }
     }
 
     /// Add a PARTITION BY expression.

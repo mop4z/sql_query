@@ -192,8 +192,7 @@ mod tests {
                 .eq("alice")
                 .or()
                 .column(UsersCol::Name)
-                .eq()
-                .val("bob")]),
+                .eq("bob")]),
         );
         assert_eq!(
             sql,

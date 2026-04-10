@@ -111,7 +111,7 @@ impl SqlQ {
         T::Col: SqlColId,
     {
         Ok(Self::select::<T>()
-            .filter([Expr::<T>::new().column(T::Col::id()).eq().val(id)])
+            .filter([Expr::<T>::new().column(T::Col::id()).eq(id)])
             .build()?
             .bind_as::<T>())
     }
@@ -122,7 +122,7 @@ impl SqlQ {
         T::Col: SqlColId,
     {
         Ok(Self::delete::<T>()
-            .filter([Expr::<T>::new().column(T::Col::id()).eq().val(id)])
+            .filter([Expr::<T>::new().column(T::Col::id()).eq(id)])
             .build()?
             .bind())
     }

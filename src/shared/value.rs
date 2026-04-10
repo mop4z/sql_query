@@ -237,6 +237,34 @@ impl From<&str> for SqlParam {
     }
 }
 
+impl From<Vec<&str>> for SqlParam {
+    fn from(value: Vec<&str>) -> Self {
+        SqlParam::StringArray(value.into_iter().map(String::from).collect())
+    }
+}
+
+macro_rules! impl_sql_param_from_ref_vec {
+    ($($elem:ty => $variant:ident),* $(,)?) => {
+        $(
+            impl From<Vec<&$elem>> for SqlParam {
+                fn from(value: Vec<&$elem>) -> Self {
+                    SqlParam::$variant(value.into_iter().cloned().collect())
+                }
+            }
+        )*
+    };
+}
+
+impl_sql_param_from_ref_vec! {
+    i32 => I32Array,
+    i64 => I64Array,
+    f64 => F64Array,
+    bool => BoolArray,
+    Decimal => DecimalArray,
+    DateTime<Utc> => DateTimeUtcArray,
+    Uuid => UuidArray,
+}
+
 impl From<NaiveDate> for SqlParam {
     fn from(value: NaiveDate) -> Self {
         SqlParam::DateTimeUtc(

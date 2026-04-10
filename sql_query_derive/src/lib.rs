@@ -205,6 +205,66 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::jsonb_text_eq(self, key, val)
             }
 
+            pub fn json_path(self, path: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::json_path(self, path)
+            }
+
+            pub fn json_path_text(self, path: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::json_path_text(self, path)
+            }
+
+            pub fn alias(self, name: &str) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::alias(self, name)
+            }
+
+            pub fn cast(self, ty: &str) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::cast(self, ty)
+            }
+
+            pub fn coalesce(self, fallback: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::coalesce(self, fallback)
+            }
+
+            pub fn round(self, precision: i32) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::round(self, precision)
+            }
+
+            pub fn concat(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::concat(self)
+            }
+
+            pub fn length(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::length(self)
+            }
+
+            pub fn trim(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::trim(self)
+            }
+
+            pub fn substring(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::substring(self)
+            }
+
+            pub fn unnest(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::unnest(self)
+            }
+
+            pub fn lag(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::lag(self)
+            }
+
+            pub fn lead(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::lead(self)
+            }
+
+            pub fn first_value(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::first_value(self)
+            }
+
+            pub fn last_value(self) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::last_value(self)
+            }
+
             pub fn col(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::col(self)
             }

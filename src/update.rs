@@ -227,8 +227,10 @@ mod tests {
 
     #[test]
     fn update_with_val_fn_now() {
-        let (sql, binds) =
-            build(SqlUpdate::new::<Users>().set([UExpr::new().column(UsersCol::Name).eq().now()]));
+        let (sql, binds) = build(
+            SqlUpdate::new::<Users>()
+                .set([UExpr::new().column(UsersCol::Name).eq(UExpr::new().now())]),
+        );
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = NOW()"#);
         assert!(binds.is_empty());
     }
@@ -262,8 +264,7 @@ mod tests {
                 .eq("alice")
                 .or()
                 .column(UsersCol::Name)
-                .eq()
-                .val("bob")]),
+                .eq("bob")]),
         );
         assert_eq!(
             sql,
