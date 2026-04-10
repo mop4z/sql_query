@@ -149,6 +149,11 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Start an expression with `*` — for use with aggregates like `COUNT(*)`.
+    pub fn star() -> Self {
+        Self::new().raw("*")
+    }
+
     /// Append `NOW()` — the current timestamp.
     pub fn now(mut self) -> Self {
         self.0.push("NOW()");
@@ -418,7 +423,7 @@ impl<T: Table> Expr<T> {
     ///
     /// ```ignore
     /// // COUNT(*) FILTER (WHERE parse_status = 'Parsed')
-    /// E::new().raw("*").count().filter(ParseStatusCol::ParseStatus.eq(ParseStatus::Parsed))
+    /// E::star().count().filter(ParseStatusCol::ParseStatus.eq(ParseStatus::Parsed))
     /// ```
     pub fn filter(mut self, condition: impl EvalExpr) -> Self {
         let (sql, binds) = condition.eval().unwrap();

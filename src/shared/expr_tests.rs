@@ -645,8 +645,7 @@ fn first_value_with_frame() {
 #[test]
 fn filter_and_over() {
     let (sql, binds) = eval(
-        E::new()
-            .raw("*")
+        E::star()
             .count()
             .filter(TC::Age.gt(18i32))
             .over(WindowSpec::new().partition_by(TC::Name.col())),
