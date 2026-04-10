@@ -394,6 +394,12 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Wrap as `ROUND(buf, precision)`.
+    pub fn round(mut self, precision: i32) -> Self {
+        self.0.wrap_fn_expr("ROUND", &precision.to_string(), vec![]);
+        self
+    }
+
     /// Append `FILTER (WHERE condition)` — Postgres aggregate filter clause.
     ///
     /// Restricts an aggregate to rows matching the condition without affecting
