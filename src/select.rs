@@ -21,6 +21,7 @@ pub struct SqlSelect {
     limit: Option<u64>,
     offset: Option<u64>,
     distinct: bool,
+    exists: bool,
     ctes: Vec<Cte>,
 }
 
@@ -41,6 +42,7 @@ impl SqlSelect {
             limit: None,
             offset: None,
             distinct: false,
+            exists: false,
             ctes,
         }
     }
@@ -102,6 +104,12 @@ impl SqlSelect {
         self
     }
 
+    /// Wraps the query as `SELECT EXISTS (...)`.
+    pub fn exists(mut self) -> Self {
+        self.exists = true;
+        self
+    }
+
     /// Adds WHERE conditions that are ANDed together.
     pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
@@ -117,8 +125,11 @@ impl SqlSelect {
 
 impl SqlBase for SqlSelect {
     fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
-        let select = if self.distinct { "SELECT DISTINCT " } else { "SELECT " };
         let mut sql = String::with_capacity(128);
+        if self.exists {
+            sql.push_str("SELECT EXISTS (");
+        }
+        let select = if self.distinct { "SELECT DISTINCT " } else { "SELECT " };
         sql.push_str(select);
         if self.columns.is_empty() {
             sql.push('*');
@@ -156,6 +167,10 @@ impl SqlBase for SqlSelect {
         if let Some(offset) = self.offset {
             sql.push_str(" OFFSET $#");
             binds.push(SqlParam::I64(offset as i64));
+        }
+
+        if self.exists {
+            sql.push(')');
         }
 
         Ok(UnbindedQuery { sql, binds })

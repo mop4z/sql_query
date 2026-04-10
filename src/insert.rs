@@ -1,5 +1,6 @@
 use crate::{
     SqlBase,
+    select::SqlSelect,
     shared::{
         Cte, Returning, SqlConflict, Table, UnbindedQuery,
         error::SqlQueryError,
@@ -13,6 +14,7 @@ use crate::{
 pub struct SqlInsert<T: Table> {
     columns: Vec<String>,
     rows: Vec<Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>>,
+    select_source: Option<(String, Vec<SqlParam>)>,
     on_conflict: Option<SqlConflict<T::Col>>,
     returning: Returning,
     ctes: Vec<Cte>,
@@ -28,6 +30,7 @@ impl<T: Table> SqlInsert<T> {
         Self {
             columns: Vec::new(),
             rows: Vec::new(),
+            select_source: None,
             on_conflict: None,
             returning: Returning::None,
             ctes,
@@ -35,12 +38,16 @@ impl<T: Table> SqlInsert<T> {
         }
     }
 
+    fn has_source(&self) -> bool {
+        !self.columns.is_empty() || !self.rows.is_empty() || self.select_source.is_some()
+    }
+
     /// Sets column-value pairs for a single-row insert.
     pub fn values(
         mut self,
         exprs: impl IntoIterator<Item = Expr<T>>,
     ) -> Result<Self, SqlQueryError> {
-        if !self.columns.is_empty() || !self.rows.is_empty() {
+        if self.has_source() {
             return Err(SqlQueryError::InsertValuesAlreadySet);
         }
         let (cols, row) = Self::extract_row(exprs);
@@ -54,7 +61,7 @@ impl<T: Table> SqlInsert<T> {
         mut self,
         rows: impl IntoIterator<Item = impl IntoIterator<Item = Expr<T>>>,
     ) -> Result<Self, SqlQueryError> {
-        if !self.columns.is_empty() || !self.rows.is_empty() {
+        if self.has_source() {
             return Err(SqlQueryError::InsertValuesAlreadySet);
         }
         let mut first = true;
@@ -66,6 +73,22 @@ impl<T: Table> SqlInsert<T> {
             }
             self.rows.push(row);
         }
+        Ok(self)
+    }
+
+    /// Sets the data source to a SELECT query instead of literal VALUES.
+    pub fn from_select(
+        mut self,
+        columns: impl IntoIterator<Item = T::Col>,
+        select: SqlSelect,
+    ) -> Result<Self, SqlQueryError> {
+        if self.has_source() {
+            return Err(SqlQueryError::InsertSourceAlreadySet);
+        }
+        self.columns = columns.into_iter().map(|c| c.as_ref().to_string()).collect();
+        let uq = SqlBase::build(select).expect("select build failed");
+        let (sql, binds) = uq.into_raw();
+        self.select_source = Some((sql, binds));
         Ok(self)
     }
 
@@ -121,23 +144,29 @@ impl<T: Table> SqlBase for SqlInsert<T> {
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds);
 
-        for (i, row) in self.rows.into_iter().enumerate() {
-            if i == 0 {
-                sql.push_str(" VALUES ");
-            } else {
-                sql.push_str(", ");
-            }
-            sql.push('(');
-            for (j, result) in row.into_iter().enumerate() {
-                if j > 0 {
+        if let Some((select_sql, select_binds)) = self.select_source {
+            sql.push(' ');
+            sql.push_str(&select_sql);
+            binds.extend(select_binds);
+        } else {
+            for (i, row) in self.rows.into_iter().enumerate() {
+                if i == 0 {
+                    sql.push_str(" VALUES ");
+                } else {
                     sql.push_str(", ");
                 }
-                let (val_sql, val_binds) =
-                    result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-                sql.push_str(&val_sql);
-                binds.extend(val_binds);
+                sql.push('(');
+                for (j, result) in row.into_iter().enumerate() {
+                    if j > 0 {
+                        sql.push_str(", ");
+                    }
+                    let (val_sql, val_binds) =
+                        result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+                    sql.push_str(&val_sql);
+                    binds.extend(val_binds);
+                }
+                sql.push(')');
             }
-            sql.push(')');
         }
 
         if let Some(conflict) = self.on_conflict {
@@ -330,6 +359,80 @@ mod tests {
             .values([UsersCol::Name.eq("alice")])
             .unwrap()
             .values_nested([vec![UsersCol::Name.eq("bob")]]);
+        assert!(matches!(result, Err(SqlQueryError::InsertValuesAlreadySet)));
+    }
+
+    type UExpr = Expr<Users>;
+
+    #[test]
+    fn insert_from_select() {
+        let select = crate::select::SqlSelect::new::<Users>()
+            .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)])
+            .filter([UsersCol::Age.gt(18i32)]);
+        let (sql, binds) = build(
+            SqlInsert::<Users>::new()
+                .from_select([UsersCol::Name, UsersCol::Age], select)
+                .unwrap(),
+        );
+        assert_eq!(
+            sql,
+            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" WHERE 1=1 AND "users".age > $1"#,
+        );
+        assert_eq!(binds, vec![SqlParam::I32(18)]);
+    }
+
+    #[test]
+    fn insert_from_select_on_conflict() {
+        let select = crate::select::SqlSelect::new::<Users>()
+            .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)])
+            .filter([UsersCol::Age.gt(18i32)]);
+        let (sql, _) = build(
+            SqlInsert::<Users>::new()
+                .from_select([UsersCol::Name, UsersCol::Age], select)
+                .unwrap()
+                .on_conflict(SqlConflict::DoNothing),
+        );
+        assert_eq!(
+            sql,
+            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" WHERE 1=1 AND "users".age > $1 ON CONFLICT DO NOTHING"#,
+        );
+    }
+
+    #[test]
+    fn insert_from_select_returning() {
+        let select = crate::select::SqlSelect::new::<Users>()
+            .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)]);
+        let (sql, _) = build(
+            SqlInsert::<Users>::new()
+                .from_select([UsersCol::Name, UsersCol::Age], select)
+                .unwrap()
+                .returning_all(),
+        );
+        assert_eq!(
+            sql,
+            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" RETURNING *"#,
+        );
+    }
+
+    #[test]
+    fn err_from_select_after_values() {
+        let select = crate::select::SqlSelect::new::<Users>()
+            .from([UExpr::new().column(UsersCol::Name)]);
+        let result = SqlInsert::<Users>::new()
+            .values([UsersCol::Name.eq("alice")])
+            .unwrap()
+            .from_select([UsersCol::Name], select);
+        assert!(matches!(result, Err(SqlQueryError::InsertSourceAlreadySet)));
+    }
+
+    #[test]
+    fn err_values_after_from_select() {
+        let select = crate::select::SqlSelect::new::<Users>()
+            .from([UExpr::new().column(UsersCol::Name)]);
+        let result = SqlInsert::<Users>::new()
+            .from_select([UsersCol::Name], select)
+            .unwrap()
+            .values([UsersCol::Name.eq("bob")]);
         assert!(matches!(result, Err(SqlQueryError::InsertValuesAlreadySet)));
     }
 }

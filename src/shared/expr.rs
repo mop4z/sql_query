@@ -250,6 +250,11 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    pub fn abs(mut self) -> Self {
+        self.0.wrap_fn("ABS");
+        self
+    }
+
     /// Wrap the buffer with an arbitrary function: `name(buf)`.
     /// Escape hatch for functions not yet supported as dedicated methods.
     pub fn wrap_raw(mut self, name: &str) -> Self {
@@ -579,6 +584,11 @@ impl<T: Table> ExprCol<T> {
         self
     }
 
+    pub fn abs(mut self) -> Self {
+        self.0.wrap_fn("ABS");
+        self
+    }
+
     // -- cast / wrap ---------------------------------------------------------
 
     /// Append a type cast: `::ty`.
@@ -715,6 +725,10 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
 
     fn upper(self) -> ExprCol<T> {
         Expr::new().column(self).upper()
+    }
+
+    fn abs(self) -> ExprCol<T> {
+        Expr::new().column(self).abs()
     }
 
     fn json_get(self, key: impl Into<SqlParam>) -> ExprCol<T> {
@@ -1458,10 +1472,7 @@ mod tests {
         let inner: E = E::new().column(TC::Name).into();
         let (sql, binds) =
             eval(E::new().column(TC::Name).eq().expr(inner.greatest(SqlParam::I32(24))));
-        assert_eq!(
-            sql,
-            r#""test_table".name = GREATEST("test_table".name, $#)"#,
-        );
+        assert_eq!(sql, r#""test_table".name = GREATEST("test_table".name, $#)"#,);
         assert_eq!(binds, vec![SqlParam::I32(24)]);
     }
 
