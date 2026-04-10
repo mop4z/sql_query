@@ -226,15 +226,9 @@ fn bench_complex_expr() {
         UExpr::new()
             .column(UsersCol::Age)
             .gte(18i32)
-            .and()
-            .column(UsersCol::Name)
-            .neq("admin")
-            .and()
-            .column(UsersCol::Email)
-            .ilike("%@company.com")
-            .or()
-            .column(UsersCol::Data)
-            .is_not_null()
+            .and(UsersCol::Name.neq("admin"))
+            .and(UsersCol::Email.ilike("%@company.com"))
+            .or(UExpr::new().column(UsersCol::Data).is_not_null())
             .eval()
             .unwrap(),
     );

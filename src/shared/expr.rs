@@ -590,31 +590,33 @@ impl<T: Table> Expr<T> {
 
     // -- logical operators ---------------------------------------------------
 
-    /// Wrap preceding expression in `()` then append ` AND `.
-    /// Use `.and_bare()` to skip the wrapping.
-    pub fn and(mut self) -> Self {
+    /// Wrap preceding expression in `()` then append ` AND expr`.
+    pub fn and(mut self, expr: impl EvalExpr) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(") AND ");
+        self.0.push_eval(expr);
         self
     }
 
-    /// Wrap preceding expression in `()` then append ` OR `.
-    /// Use `.or_bare()` to skip the wrapping.
-    pub fn or(mut self) -> Self {
+    /// Wrap preceding expression in `()` then append ` OR expr`.
+    pub fn or(mut self, expr: impl EvalExpr) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(") OR ");
+        self.0.push_eval(expr);
         self
     }
 
-    /// Append ` AND ` without parenthesising the preceding expression.
-    pub fn and_bare(mut self) -> Self {
+    /// Append ` AND expr` without parenthesising the preceding expression.
+    pub fn and_bare(mut self, expr: impl EvalExpr) -> Self {
         self.0.push(" AND ");
+        self.0.push_eval(expr);
         self
     }
 
-    /// Append ` OR ` without parenthesising the preceding expression.
-    pub fn or_bare(mut self) -> Self {
+    /// Append ` OR expr` without parenthesising the preceding expression.
+    pub fn or_bare(mut self, expr: impl EvalExpr) -> Self {
         self.0.push(" OR ");
+        self.0.push_eval(expr);
         self
     }
 

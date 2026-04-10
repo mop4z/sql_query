@@ -243,27 +243,26 @@ fn raw_pass_through() {
 #[test]
 fn and_chain() {
     let (sql, _) =
-        eval(E::new().column(TC::Name).eq("alice").and().column(TC::Age).gt(SqlParam::I32(18)));
+        eval(E::new().column(TC::Name).eq("alice").and(TC::Age.gt(SqlParam::I32(18))));
     assert_eq!(sql, r#"("test_table".name = $#) AND "test_table".age > $#"#);
 }
 
 #[test]
 fn or_chain() {
-    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").or().column(TC::Name).eq("bob"));
+    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").or(TC::Name.eq("bob")));
     assert_eq!(sql, r#"("test_table".name = $#) OR "test_table".name = $#"#);
 }
 
 #[test]
 fn and_bare_chain() {
-    let (sql, _) = eval(
-        E::new().column(TC::Name).eq("alice").and_bare().column(TC::Age).gt(SqlParam::I32(18)),
-    );
+    let (sql, _) =
+        eval(E::new().column(TC::Name).eq("alice").and_bare(TC::Age.gt(SqlParam::I32(18))));
     assert_eq!(sql, r#""test_table".name = $# AND "test_table".age > $#"#);
 }
 
 #[test]
 fn or_bare_chain() {
-    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").or_bare().column(TC::Name).eq("bob"));
+    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").or_bare(TC::Name.eq("bob")));
     assert_eq!(sql, r#""test_table".name = $# OR "test_table".name = $#"#);
 }
 
@@ -418,7 +417,7 @@ fn cast_on_col() {
 #[test]
 fn paren_wrap() {
     let (sql, _) =
-        eval(E::new().column(TC::Name).eq("a").or_bare().column(TC::Name).eq("b").paren());
+        eval(E::new().column(TC::Name).eq("a").or_bare(TC::Name.eq("b")).paren());
     assert_eq!(sql, r#"("test_table".name = $# OR "test_table".name = $#)"#);
 }
 

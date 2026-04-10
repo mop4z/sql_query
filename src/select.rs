@@ -719,9 +719,7 @@ mod tests {
         let (sql, binds) = build(
             SqlSelect::new::<Users>().filter([UsersCol::Name
                 .eq("alice")
-                .or()
-                .column(UsersCol::Name)
-                .eq("bob")]),
+                .or(UsersCol::Name.eq("bob"))]),
         );
         assert_eq!(
             sql,
@@ -733,7 +731,7 @@ mod tests {
     #[test]
     fn filter_or_with_other_filters() {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([
-            UsersCol::Name.eq("alice").or().column(UsersCol::Name).eq("bob"),
+            UsersCol::Name.eq("alice").or(UsersCol::Name.eq("bob")),
             UsersCol::Age.gte(18i32),
         ]));
         assert_eq!(

@@ -190,9 +190,7 @@ mod tests {
         let (sql, binds) = build(
             SqlDelete::<Users>::new().filter([UsersCol::Name
                 .eq("alice")
-                .or()
-                .column(UsersCol::Name)
-                .eq("bob")]),
+                .or(UsersCol::Name.eq("bob"))]),
         );
         assert_eq!(
             sql,

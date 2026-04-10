@@ -279,9 +279,7 @@ mod tests {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>().set([UsersCol::Age.eq(0i32)]).filter([UsersCol::Name
                 .eq("alice")
-                .or()
-                .column(UsersCol::Name)
-                .eq("bob")]),
+                .or(UsersCol::Name.eq("bob"))]),
         );
         assert_eq!(
             sql,
