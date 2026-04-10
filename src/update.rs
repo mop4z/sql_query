@@ -37,13 +37,15 @@ impl SqlUpdate {
         }
     }
 
-    /// Adds SET clauses for the columns to update.
+    /// Add `SET col = val` clauses. Pass `Col::Name.eq(val)` expressions,
+    /// or use `Expr::new().column(col).eq().now()` for computed values.
     pub fn set<T: Table>(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.set_clauses.extend(exprs.into_iter().map(|x| x.eval()));
         self
     }
 
-    /// Adds a FROM clause to reference another table in the update.
+    /// Add a `FROM "table"` clause for multi-table updates (Postgres-specific).
+    /// Allows referencing columns from another table in SET and WHERE clauses.
     pub fn from<T: Table>(mut self) -> Self {
         let mut s = String::with_capacity(T::TABLE_NAME.len() + 2);
         s.push('"');

@@ -42,7 +42,11 @@ impl<T: Table> SqlInsert<T> {
         !self.columns.is_empty() || !self.rows.is_empty() || self.select_source.is_some()
     }
 
-    /// Sets column-value pairs for a single-row insert.
+    /// Set column-value pairs for a single-row `INSERT INTO ... VALUES (...)`.
+    ///
+    /// Pass expressions like `Col::Name.eq("alice")` — the column name is
+    /// extracted from the left side of `=`, and the value from the right.
+    /// Mutually exclusive with `.values_nested()` and `.from_select()`.
     pub fn values(
         mut self,
         exprs: impl IntoIterator<Item = Expr<T>>,
@@ -56,7 +60,8 @@ impl<T: Table> SqlInsert<T> {
         Ok(self)
     }
 
-    /// Sets column-value pairs for a multi-row insert.
+    /// Set column-value pairs for a multi-row `INSERT INTO ... VALUES (...), (...)`.
+    /// Mutually exclusive with `.values()` and `.from_select()`.
     pub fn values_nested(
         mut self,
         rows: impl IntoIterator<Item = impl IntoIterator<Item = Expr<T>>>,
@@ -76,7 +81,11 @@ impl<T: Table> SqlInsert<T> {
         Ok(self)
     }
 
-    /// Sets the data source to a SELECT query instead of literal VALUES.
+    /// Use a SELECT query as the data source: `INSERT INTO ... SELECT ...`.
+    ///
+    /// `columns` lists the target column names; `select` provides the rows.
+    /// Column order must match between the INSERT column list and the SELECT output.
+    /// Mutually exclusive with `.values()` and `.values_nested()`.
     pub fn from_select(
         mut self,
         columns: impl IntoIterator<Item = T::Col>,

@@ -35,7 +35,9 @@ impl<T: Table> SqlDelete<T> {
         }
     }
 
-    /// Allows deleting all rows without requiring any filter conditions.
+    /// Opt in to deleting all rows without a WHERE clause.
+    /// Required because `.build()` will error if neither `.filter()` nor
+    /// `.delete_all()` is called — a safety guard against accidental full-table deletes.
     pub fn delete_all(mut self) -> Self {
         self.delete_all = true;
         self

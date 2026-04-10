@@ -13,13 +13,21 @@ use crate::{
 // EvalExpr — trait for any expression type that can be evaluated to SQL
 // ---------------------------------------------------------------------------
 
-/// Types that can be evaluated into a SQL string and bound parameters.
+/// Anything that can produce a SQL fragment and bound parameters.
+///
+/// Implemented automatically for all `Into<SqlParam>` types (scalars produce `$#`
+/// with one bind), for `Expr<T>` (produces its accumulated SQL), and for
+/// derive-generated column enums (produce `"table".col`).
+///
+/// This is the primary parameter bound throughout the expression API — methods
+/// like `.val()`, `.eq()` on `ColOps`, `.in_()`, etc. all accept `impl EvalExpr`,
+/// so you can pass plain values, column references, or full sub-expressions.
 pub trait EvalExpr {
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError>;
 }
 
 // ---------------------------------------------------------------------------
-// Internal buffer shared by Expr and CASE WHEN typestates
+// Internal buffer
 // ---------------------------------------------------------------------------
 
 struct ExprBuf<T: Table> {
@@ -85,20 +93,46 @@ impl<T: Table> ExprBuf<T> {
 // Expr<T> — the single expression type
 // ---------------------------------------------------------------------------
 
+/// A SQL expression bound to table `T`.
+///
+/// All expression building flows through this type. Chain methods to
+/// incrementally build SQL, then pass to query builder methods like
+/// `.filter()`, `.set()`, or `.from()` which call `.eval()` internally.
+///
+/// ```ignore
+/// type E = Expr<Users>;
+///
+/// // col = val
+/// E::new().column(UC::Name).eq().val("alice")
+///
+/// // col = col + val  (self-referential arithmetic)
+/// E::new().column(UC::Balance).eq().column(UC::Balance).add().val(amount)
+///
+/// // CASE WHEN ... THEN ... ELSE ... END
+/// E::new().column(UC::Status).eq()
+///     .if_(E::new().val(is_active))
+///     .then_(E::new().raw("'active'"))
+///     .else_(E::new().raw("'inactive'"))
+/// ```
 pub struct Expr<T: Table>(ExprBuf<T>);
 
 impl<T: Table> Expr<T> {
+    /// Start a new empty expression.
     pub fn new() -> Self {
         Self(ExprBuf::new())
     }
 
     // -- column references ---------------------------------------------------
 
+    /// Append a qualified column: `"table".col`.
     pub fn column(mut self, col: T::Col) -> Self {
         self.0.push_col(col);
         self
     }
 
+    /// Append a qualified column from a different table: `"other_table".col`.
+    ///
+    /// Useful in UPDATE ... SET or JOIN conditions that reference across tables.
     pub fn column_of<U: Table>(mut self, col: U::Col) -> Self {
         self.0.push_col_of::<U>(col);
         self
@@ -106,31 +140,38 @@ impl<T: Table> Expr<T> {
 
     // -- values / literals ---------------------------------------------------
 
+    /// Append a value or expression. Scalars become `$#` with a bind parameter;
+    /// expressions splice their SQL and binds directly.
     pub fn val(mut self, v: impl EvalExpr) -> Self {
         self.0.push_eval(v);
         self
     }
 
+    /// Append `NOW()` — the current timestamp.
     pub fn now(mut self) -> Self {
         self.0.push("NOW()");
         self
     }
 
+    /// Append `NULL`.
     pub fn null(mut self) -> Self {
         self.0.push("NULL");
         self
     }
 
+    /// Append `TRUE`.
     pub fn true_(mut self) -> Self {
         self.0.push("TRUE");
         self
     }
 
+    /// Append `FALSE`.
     pub fn false_(mut self) -> Self {
         self.0.push("FALSE");
         self
     }
 
+    /// Append raw SQL verbatim. No escaping or parameterisation.
     pub fn raw(mut self, s: &str) -> Self {
         self.0.push(s);
         self
@@ -138,31 +179,37 @@ impl<T: Table> Expr<T> {
 
     // -- comparison operators ------------------------------------------------
 
+    /// Append ` = `.
     pub fn eq(mut self) -> Self {
         self.0.push(" = ");
         self
     }
 
+    /// Append ` != `.
     pub fn neq(mut self) -> Self {
         self.0.push(" != ");
         self
     }
 
+    /// Append ` > `.
     pub fn gt(mut self) -> Self {
         self.0.push(" > ");
         self
     }
 
+    /// Append ` >= `.
     pub fn gte(mut self) -> Self {
         self.0.push(" >= ");
         self
     }
 
+    /// Append ` < `.
     pub fn lt(mut self) -> Self {
         self.0.push(" < ");
         self
     }
 
+    /// Append ` <= `.
     pub fn lte(mut self) -> Self {
         self.0.push(" <= ");
         self
@@ -170,21 +217,25 @@ impl<T: Table> Expr<T> {
 
     // -- arithmetic operators ------------------------------------------------
 
+    /// Append ` + `.
     pub fn add(mut self) -> Self {
         self.0.push(" + ");
         self
     }
 
+    /// Append ` - `.
     pub fn sub(mut self) -> Self {
         self.0.push(" - ");
         self
     }
 
+    /// Append ` * `.
     pub fn mul(mut self) -> Self {
         self.0.push(" * ");
         self
     }
 
+    /// Append ` / `.
     pub fn div(mut self) -> Self {
         self.0.push(" / ");
         self
@@ -192,6 +243,7 @@ impl<T: Table> Expr<T> {
 
     // -- set operators -------------------------------------------------------
 
+    /// Append ` IN ($1)`. Pass an array `SqlParam` for multi-value IN.
     pub fn in_(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" IN (");
         self.0.push_eval(v);
@@ -199,6 +251,7 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Append ` NOT IN ($1)`.
     pub fn not_in(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" NOT IN (");
         self.0.push_eval(v);
@@ -208,6 +261,7 @@ impl<T: Table> Expr<T> {
 
     // -- any / all -----------------------------------------------------------
 
+    /// Append ` = ANY($1)`. Use with array params for Postgres array matching.
     pub fn any(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" = ANY(");
         self.0.push_eval(v);
@@ -215,6 +269,7 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Append ` = ALL($1)`.
     pub fn all(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" = ALL(");
         self.0.push_eval(v);
@@ -224,6 +279,7 @@ impl<T: Table> Expr<T> {
 
     // -- subquery set ops ----------------------------------------------------
 
+    /// Append ` IN (SELECT ...)` with a subquery.
     pub fn in_select(mut self, q: SqlSelect) -> Self {
         self.0.push(" IN ");
         let uq = SqlBase::build(q).expect("subquery build failed");
@@ -235,6 +291,7 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Append ` NOT IN (SELECT ...)` with a subquery.
     pub fn not_in_select(mut self, q: SqlSelect) -> Self {
         self.0.push(" NOT IN ");
         let uq = SqlBase::build(q).expect("subquery build failed");
@@ -248,12 +305,14 @@ impl<T: Table> Expr<T> {
 
     // -- pattern matching ----------------------------------------------------
 
+    /// Append ` LIKE $1`. Case-sensitive pattern match.
     pub fn like(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" LIKE ");
         self.0.push_eval(v);
         self
     }
 
+    /// Append ` ILIKE $1`. Case-insensitive pattern match (Postgres-specific).
     pub fn ilike(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" ILIKE ");
         self.0.push_eval(v);
@@ -262,11 +321,13 @@ impl<T: Table> Expr<T> {
 
     // -- null checks ---------------------------------------------------------
 
+    /// Append ` IS NULL`.
     pub fn is_null(mut self) -> Self {
         self.0.push(" IS NULL");
         self
     }
 
+    /// Append ` IS NOT NULL`.
     pub fn is_not_null(mut self) -> Self {
         self.0.push(" IS NOT NULL");
         self
@@ -274,6 +335,7 @@ impl<T: Table> Expr<T> {
 
     // -- range ---------------------------------------------------------------
 
+    /// Append ` BETWEEN $1 AND $2`.
     pub fn between(mut self, lo: impl EvalExpr, hi: impl EvalExpr) -> Self {
         self.0.push(" BETWEEN ");
         self.0.push_eval(lo);
@@ -284,62 +346,94 @@ impl<T: Table> Expr<T> {
 
     // -- aggregate / scalar wraps -------------------------------------------
 
+    /// Wrap as `COUNT(buf)`.
     pub fn count(mut self) -> Self {
         self.0.wrap_fn("COUNT");
         self
     }
 
+    /// Wrap as `SUM(buf)`.
     pub fn sum(mut self) -> Self {
         self.0.wrap_fn("SUM");
         self
     }
 
+    /// Wrap as `AVG(buf)`.
     pub fn avg(mut self) -> Self {
         self.0.wrap_fn("AVG");
         self
     }
 
+    /// Wrap as `MIN(buf)` (SQL aggregate — smallest value in group).
     pub fn min(mut self) -> Self {
         self.0.wrap_fn("MIN");
         self
     }
 
+    /// Wrap as `MAX(buf)` (SQL aggregate — largest value in group).
     pub fn max(mut self) -> Self {
         self.0.wrap_fn("MAX");
         self
     }
 
+    /// Wrap as `LOWER(buf)`.
     pub fn lower(mut self) -> Self {
         self.0.wrap_fn("LOWER");
         self
     }
 
+    /// Wrap as `UPPER(buf)`.
     pub fn upper(mut self) -> Self {
         self.0.wrap_fn("UPPER");
         self
     }
 
+    /// Wrap as `ABS(buf)`.
     pub fn abs(mut self) -> Self {
         self.0.wrap_fn("ABS");
         self
     }
 
+    /// Append `FILTER (WHERE condition)` — Postgres aggregate filter clause.
+    ///
+    /// Restricts an aggregate to rows matching the condition without affecting
+    /// other aggregates in the same query.
+    ///
+    /// ```ignore
+    /// // COUNT(*) FILTER (WHERE parse_status = 'Parsed')
+    /// E::new().raw("*").count().filter(ParseStatusCol::ParseStatus.eq(ParseStatus::Parsed))
+    /// ```
+    pub fn filter(mut self, condition: impl EvalExpr) -> Self {
+        let (sql, binds) = condition.eval().unwrap();
+        self.0.push(" FILTER (WHERE ");
+        self.0.push(&sql);
+        self.0.binds.extend(binds);
+        self.0.push(")");
+        self
+    }
+
+    /// Wrap as `UNNEST(buf)` — expand a Postgres array into rows.
     pub fn unnest(mut self) -> Self {
         self.0.wrap_fn("UNNEST");
         self
     }
 
+    /// Wrap as `DATE(buf)` — extract the date part of a timestamp.
     pub fn date(mut self) -> Self {
         self.0.wrap_fn("DATE");
         self
     }
 
+    /// Wrap as `GREATEST(buf, other)` — scalar comparison, returns the larger value.
+    /// Not to be confused with `MAX()` which is an aggregate over a group.
     pub fn greatest(mut self, other: impl EvalExpr) -> Self {
         let (sql, binds) = other.eval().unwrap();
         self.0.wrap_fn_expr("GREATEST", &sql, binds);
         self
     }
 
+    /// Wrap as `LEAST(buf, other)` — scalar comparison, returns the smaller value.
+    /// Not to be confused with `MIN()` which is an aggregate over a group.
     pub fn least(mut self, other: impl EvalExpr) -> Self {
         let (sql, binds) = other.eval().unwrap();
         self.0.wrap_fn_expr("LEAST", &sql, binds);
@@ -348,18 +442,21 @@ impl<T: Table> Expr<T> {
 
     // -- json ----------------------------------------------------------------
 
+    /// Append ` -> key` — JSON field access, returns JSON.
     pub fn json_get(mut self, key: impl EvalExpr) -> Self {
         self.0.push(" -> ");
         self.0.push_eval(key);
         self
     }
 
+    /// Append ` ->> key` — JSON field access, returns text.
     pub fn json_get_text(mut self, key: impl EvalExpr) -> Self {
         self.0.push(" ->> ");
         self.0.push_eval(key);
         self
     }
 
+    /// Shorthand for `col ->> key = val` — JSONB text field equality.
     pub fn jsonb_text_eq(mut self, key: impl EvalExpr, val: impl EvalExpr) -> Self {
         self.0.push(" ->> ");
         self.0.push_eval(key);
@@ -368,12 +465,14 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Append ` #> path` — JSON path access, returns JSON.
     pub fn json_path(mut self, path: impl EvalExpr) -> Self {
         self.0.push(" #> ");
         self.0.push_eval(path);
         self
     }
 
+    /// Append ` #>> path` — JSON path access, returns text.
     pub fn json_path_text(mut self, path: impl EvalExpr) -> Self {
         self.0.push(" #>> ");
         self.0.push_eval(path);
@@ -382,6 +481,7 @@ impl<T: Table> Expr<T> {
 
     // -- coalesce ------------------------------------------------------------
 
+    /// Wrap as `COALESCE(buf, fallback)` — returns the first non-null argument.
     pub fn coalesce(mut self, fallback: impl EvalExpr) -> Self {
         self.0.buf.insert_str(0, "COALESCE(");
         self.0.push(", ");
@@ -392,21 +492,25 @@ impl<T: Table> Expr<T> {
 
     // -- string functions ----------------------------------------------------
 
+    /// Wrap as `CONCAT(buf)`.
     pub fn concat(mut self) -> Self {
         self.0.wrap_fn("CONCAT");
         self
     }
 
+    /// Wrap as `LENGTH(buf)`.
     pub fn length(mut self) -> Self {
         self.0.wrap_fn("LENGTH");
         self
     }
 
+    /// Wrap as `TRIM(buf)`.
     pub fn trim(mut self) -> Self {
         self.0.wrap_fn("TRIM");
         self
     }
 
+    /// Wrap as `SUBSTRING(buf)`.
     pub fn substring(mut self) -> Self {
         self.0.wrap_fn("SUBSTRING");
         self
@@ -414,13 +518,14 @@ impl<T: Table> Expr<T> {
 
     // -- cast / wrap ---------------------------------------------------------
 
+    /// Append a Postgres type cast: `::ty` (e.g. `::text`, `::int`).
     pub fn cast(mut self, ty: &str) -> Self {
         self.0.buf.push_str("::");
         self.0.buf.push_str(ty);
         self
     }
 
-    /// Wrap the buffer with an arbitrary function: `name(buf)`.
+    /// Wrap as `name(buf)` — escape hatch for SQL functions not yet built in.
     pub fn wrap_raw(mut self, name: &str) -> Self {
         self.0.wrap_fn(name);
         self
@@ -428,6 +533,7 @@ impl<T: Table> Expr<T> {
 
     // -- alias ---------------------------------------------------------------
 
+    /// Append ` AS name` — column alias for SELECT output.
     pub fn alias(mut self, name: &str) -> Self {
         self.0.buf.push_str(" AS ");
         self.0.buf.push_str(name);
@@ -436,33 +542,41 @@ impl<T: Table> Expr<T> {
 
     // -- logical operators ---------------------------------------------------
 
+    /// Wrap preceding expression in `()` then append ` AND `.
+    /// Use `.and_bare()` to skip the wrapping.
     pub fn and(mut self) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(") AND ");
         self
     }
 
+    /// Wrap preceding expression in `()` then append ` OR `.
+    /// Use `.or_bare()` to skip the wrapping.
     pub fn or(mut self) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(") OR ");
         self
     }
 
+    /// Append ` AND ` without parenthesising the preceding expression.
     pub fn and_bare(mut self) -> Self {
         self.0.push(" AND ");
         self
     }
 
+    /// Append ` OR ` without parenthesising the preceding expression.
     pub fn or_bare(mut self) -> Self {
         self.0.push(" OR ");
         self
     }
 
+    /// Prepend `NOT ` to the entire expression.
     pub fn not(mut self) -> Self {
         self.0.buf.insert_str(0, "NOT ");
         self
     }
 
+    /// Wrap the entire expression in `(…)`.
     pub fn paren(mut self) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(")");
@@ -471,6 +585,12 @@ impl<T: Table> Expr<T> {
 
     // -- function call -------------------------------------------------------
 
+    /// Emit `name(prefix val)` — for SQL functions with a named-argument prefix.
+    ///
+    /// ```ignore
+    /// // make_interval(hours => $1)
+    /// E::new().func("make_interval", "hours => ", ttl_hours)
+    /// ```
     pub fn func(mut self, name: &str, prefix: &str, v: impl EvalExpr) -> Self {
         self.0.buf.push_str(name);
         self.0.buf.push('(');
@@ -482,6 +602,7 @@ impl<T: Table> Expr<T> {
 
     // -- splice expression ---------------------------------------------------
 
+    /// Splice another expression's SQL and binds into the current position.
     pub fn expr(mut self, e: impl Into<Expr<T>>) -> Self {
         let e: Expr<T> = e.into();
         let (sql, binds) = e.0.eval().unwrap();
@@ -492,14 +613,17 @@ impl<T: Table> Expr<T> {
 
     // -- subqueries ----------------------------------------------------------
 
+    /// Append `EXISTS (SELECT ...)`.
     pub fn exists(self, q: SqlSelect) -> Self {
         self.raw("EXISTS ").select(q)
     }
 
+    /// Append `NOT EXISTS (SELECT ...)`.
     pub fn not_exists(self, q: SqlSelect) -> Self {
         self.raw("NOT EXISTS ").select(q)
     }
 
+    /// Append a parenthesised subquery: `(SELECT ...)`.
     pub fn select(mut self, q: SqlSelect) -> Self {
         let uq = SqlBase::build(q).expect("subquery build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
@@ -512,6 +636,7 @@ impl<T: Table> Expr<T> {
 
     // -- CASE WHEN -----------------------------------------------------------
 
+    /// Begin a `CASE WHEN condition …` block. Must chain `.then_()` then `.else_()`.
     pub fn if_(mut self, condition: Expr<T>) -> ExprIf<T> {
         let (cond_sql, cond_binds) = condition.0.eval().unwrap();
         self.0.push("CASE WHEN ");
@@ -522,6 +647,8 @@ impl<T: Table> Expr<T> {
 
     // -- internal ------------------------------------------------------------
 
+    /// Split a `col = val` expression into its column name and value SQL.
+    /// Used internally by INSERT to extract column names from SET expressions.
     pub(crate) fn into_col_and_val(self) -> (Option<String>, String, Vec<SqlParam>) {
         let sql = self.0.buf;
         let binds = self.0.binds;
@@ -543,6 +670,8 @@ impl<T: Table> EvalExpr for Expr<T> {
     }
 }
 
+/// Blanket impl: any `Into<SqlParam>` type (scalars, enums, arrays) can be
+/// used as an `EvalExpr`. Produces `$#` (placeholder) with one bind.
 impl<T: Into<SqlParam>> EvalExpr for T {
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         Ok(("$#".to_string(), vec![self.into()]))
@@ -560,127 +689,165 @@ impl<T: Table> From<SqlParam> for Expr<T> {
 // ---------------------------------------------------------------------------
 
 /// Shorthand methods available on every column enum derived with `SqlCols`.
+///
+/// Each method creates `Expr::new().column(self)` then chains the operation,
+/// so `UC::Name.eq("alice")` is equivalent to `Expr::new().column(UC::Name).eq().val("alice")`.
+///
+/// All methods have default implementations. The derive macro generates an
+/// empty `impl ColOps<Struct> for StructCol {}` plus thin inherent wrappers
+/// (needed because `PartialEq::eq` would shadow the trait method).
 pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
+    /// `"table".col = val`
     fn eq(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).eq().val(val)
     }
 
+    /// `"table".col != val`
     fn neq(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).neq().val(val)
     }
 
+    /// `"table".col > val`
     fn gt(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).gt().val(val)
     }
 
+    /// `"table".col >= val`
     fn gte(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).gte().val(val)
     }
 
+    /// `"table".col < val`
     fn lt(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).lt().val(val)
     }
 
+    /// `"table".col <= val`
     fn lte(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).lte().val(val)
     }
 
+    /// `"table".col LIKE val`
     fn like(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).like(val)
     }
 
+    /// `"table".col ILIKE val`
     fn ilike(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).ilike(val)
     }
 
+    /// `"table".col IN (val)`
     fn in_(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).in_(val)
     }
 
+    /// `"table".col NOT IN (val)`
     fn not_in(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).not_in(val)
     }
 
+    /// `"table".col BETWEEN lo AND hi`
     fn between(self, lo: impl EvalExpr, hi: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).between(lo, hi)
     }
 
+    /// `"table".col IN (SELECT ...)`
     fn in_select(self, select: SqlSelect) -> Expr<T> {
         Expr::new().column(self).in_select(select)
     }
 
+    /// `"table".col NOT IN (SELECT ...)`
     fn not_in_select(self, select: SqlSelect) -> Expr<T> {
         Expr::new().column(self).not_in_select(select)
     }
 
+    /// `"table".col IS NULL`
     fn is_null(self) -> Expr<T> {
         Expr::new().column(self).is_null()
     }
 
+    /// `"table".col IS NOT NULL`
     fn is_not_null(self) -> Expr<T> {
         Expr::new().column(self).is_not_null()
     }
 
+    /// `COUNT("table".col)`
     fn count(self) -> Expr<T> {
         Expr::new().column(self).count()
     }
 
+    /// `SUM("table".col)`
     fn sum(self) -> Expr<T> {
         Expr::new().column(self).sum()
     }
 
+    /// `AVG("table".col)`
     fn avg(self) -> Expr<T> {
         Expr::new().column(self).avg()
     }
 
+    /// `MIN("table".col)` — aggregate minimum.
     fn min(self) -> Expr<T> {
         Expr::new().column(self).min()
     }
 
+    /// `MAX("table".col)` — aggregate maximum.
     fn max(self) -> Expr<T> {
         Expr::new().column(self).max()
     }
 
+    /// `GREATEST("table".col, other)` — scalar comparison.
     fn greatest(self, other: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).greatest(other)
     }
 
+    /// `LEAST("table".col, other)` — scalar comparison.
     fn least(self, other: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).least(other)
     }
 
+    /// `LOWER("table".col)`
     fn lower(self) -> Expr<T> {
         Expr::new().column(self).lower()
     }
 
+    /// `UPPER("table".col)`
     fn upper(self) -> Expr<T> {
         Expr::new().column(self).upper()
     }
 
+    /// `ABS("table".col)`
     fn abs(self) -> Expr<T> {
         Expr::new().column(self).abs()
     }
 
+    /// `DATE("table".col)`
     fn date(self) -> Expr<T> {
         Expr::new().column(self).date()
     }
 
+    /// `"table".col -> key` — JSON field access, returns JSON.
     fn json_get(self, key: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).json_get(key)
     }
 
+    /// `"table".col ->> key` — JSON field access, returns text.
     fn json_get_text(self, key: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).json_get_text(key)
     }
 
+    /// `"table".col = ANY(val)` — Postgres array contains check.
     fn any(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).any(val)
     }
 
+    /// `"table".col ->> key = val` — JSONB text field equality.
     fn jsonb_text_eq(self, key: impl EvalExpr, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).jsonb_text_eq(key, val)
     }
 
+    /// Start an `Expr<T>` from this column for further chaining.
     fn col(self) -> Expr<T> {
         Expr::new().column(self)
     }
@@ -690,9 +857,11 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
 // ExprIf<T> / ExprThen<T> — CASE WHEN typestate
 // ---------------------------------------------------------------------------
 
+/// Intermediate state after `.if_(condition)`. Must call `.then_()` next.
 pub struct ExprIf<T: Table>(ExprBuf<T>);
 
 impl<T: Table> ExprIf<T> {
+    /// Append ` THEN val`. Must call `.else_()` after this.
     pub fn then_(mut self, val: impl Into<Expr<T>>) -> ExprThen<T> {
         let expr: Expr<T> = val.into();
         let (sql, binds) = expr.0.eval().unwrap();
@@ -703,9 +872,11 @@ impl<T: Table> ExprIf<T> {
     }
 }
 
+/// Intermediate state after `.then_()`. Must call `.else_()` to complete.
 pub struct ExprThen<T: Table>(ExprBuf<T>);
 
 impl<T: Table> ExprThen<T> {
+    /// Append ` ELSE val END` and return the completed expression.
     pub fn else_(mut self, val: impl Into<Expr<T>>) -> Expr<T> {
         let expr: Expr<T> = val.into();
         let (sql, binds) = expr.0.eval().unwrap();
@@ -721,6 +892,7 @@ impl<T: Table> ExprThen<T> {
 // Enums used by the query builders
 // ---------------------------------------------------------------------------
 
+/// Sort direction for `ORDER BY` clauses.
 #[derive(strum::AsRefStr)]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum SqlOrder {
@@ -732,6 +904,7 @@ pub enum SqlOrder {
     DescNullsFirst,
 }
 
+/// SQL join type for combining tables.
 #[derive(strum::AsRefStr)]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum SqlJoin {
@@ -742,6 +915,10 @@ pub enum SqlJoin {
     FullOuter,
     Cross,
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 #[path = "expr_tests.rs"]

@@ -27,6 +27,9 @@ pub trait SqlEnum:
 {
 }
 
+/// Object-safe trait for type-erased Postgres bind parameters.
+/// Implemented via blanket impl for any `Encode + Type + Clone + Send + Sync + Debug`.
+/// Used internally by `SqlParam::Custom` to box arbitrary Postgres types.
 pub trait SqlParamCustom: Send + Sync {
     fn encode_param(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError>;
     fn type_info_param(&self) -> PgTypeInfo;
@@ -52,6 +55,13 @@ where
     }
 }
 
+/// A type-erased Postgres bind parameter.
+///
+/// Wraps all supported scalar and array types into a single enum that can be
+/// stored in a `Vec` alongside the SQL string. `From` impls exist for all
+/// common Rust types (`String`, `i32`, `Uuid`, `Vec<i64>`, etc.), `Option<T>`
+/// maps to the inner variant or `Null`, and custom Postgres enums go through
+/// the `Custom` variant via `#[derive(SqlParamEnum)]`.
 pub enum SqlParam {
     String(String),
     I16(i16),

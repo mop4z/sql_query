@@ -47,7 +47,10 @@ impl SqlSelect {
         }
     }
 
-    /// Sets the columns to select from the given table.
+    /// Set the SELECT column list. Omit to select `*`.
+    ///
+    /// Accepts column expressions — use `Col::col()`, `Col::count().alias("n")`,
+    /// or `Expr::new().val(literal)` for computed columns.
     pub fn from(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
             self.columns.push(c.eval().unwrap().0);
@@ -104,7 +107,8 @@ impl SqlSelect {
         self
     }
 
-    /// Wraps the query as `SELECT EXISTS (...)`.
+    /// Wrap the entire query as `SELECT EXISTS (SELECT ...)`.
+    /// The result is a single boolean — use `.bind_scalar::<bool>().fetch_one()`.
     pub fn exists(mut self) -> Self {
         self.exists = true;
         self
