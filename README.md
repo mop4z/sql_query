@@ -398,29 +398,20 @@ E::new().column(UC::AgeGroup).eq()
 // With column refs and GREATEST in THEN branch
 E::new().column(UC::ClosedAt).eq()
     .if_(E::new().val(is_closed))
-    .then_(Expr::greatest(
-        E::new().val(close_ts),
-        E::new().column(UC::AcquiredAt).into(),
-    ))
+    .then_(UC::AcquiredAt.greatest(close_ts))
     .else_(E::new().null())
 ```
 
 ### GREATEST / LEAST
 
-Static constructors on `Expr` that take two expressions:
+Instance methods on `Expr` and col shorthand that wrap in `GREATEST(self, val)` / `LEAST(self, val)`:
 
 ```rust
-// GREATEST($1, "users".created_at)
-Expr::greatest(
-    E::new().val(some_timestamp),
-    E::new().column(UC::CreatedAt).into(),
-)
+// GREATEST("users".created_at, $1)
+UC::CreatedAt.greatest(some_timestamp)
 
 // LEAST($1, $2)
-Expr::least(
-    E::new().val(10i32),
-    E::new().val(20i32),
-)
+E::new().val(10i32).least(20i32)
 ```
 
 ### Type Casts
@@ -531,10 +522,7 @@ SqlQ::update::<TradeLot>()
             .column(TL::RealisedPnl).add().val(pnl_delta),
         E::new().column(TL::ClosedAt).eq()
             .if_(E::new().val(is_closed))
-            .then_(Expr::greatest(
-                E::new().val(close_ts),
-                E::new().column(TL::AcquiredAt).into(),
-            ))
+            .then_(TL::AcquiredAt.greatest(close_ts))
             .else_(E::new().null()),
         E::new().column(TL::UpdatedAt).eq().now(),
     ])
@@ -635,6 +623,8 @@ Methods on the generated `Col` enum that return `Expr<T>` (ready for `.filter()`
 | `Col::Id.in_select(sub)`        | `"t".id IN (SELECT ...)`     |
 | `Col::Id.not_in_select(sub)`    | `"t".id NOT IN (SELECT ...)` |
 | `Col::Name.any(val)`            | `"t".name = ANY($1)`         |
+| `Col::Age.greatest(val)`        | `GREATEST("t".age, $1)`      |
+| `Col::Age.least(val)`           | `LEAST("t".age, $1)`         |
 | `Col::Data.jsonb_text_eq(k, v)` | `"t".data ->> $1 = $2`       |
 
 ### Col Aggregate / Function Methods
@@ -694,8 +684,8 @@ Methods on `Expr<T>` (base/terminal state):
 | `.exists(sub)`               | Append `EXISTS (subquery)`      |
 | `.not_exists(sub)`           | Append `NOT EXISTS (subquery)`  |
 | `.select(sub)`               | Append `(subquery)`             |
-| `Expr::greatest(a, b)`       | `GREATEST(a, b)`                |
-| `Expr::least(a, b)`          | `LEAST(a, b)`                   |
+| `.greatest(val)`             | `GREATEST(self, $1)`            |
+| `.least(val)`                | `LEAST(self, $1)`               |
 
 ### ExprOp Methods
 

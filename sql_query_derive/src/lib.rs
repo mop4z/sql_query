@@ -161,6 +161,14 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::max(self)
             }
 
+            pub fn greatest(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::greatest(self, val)
+            }
+
+            pub fn least(self, val: impl Into<::sql_query::SqlParam>) -> ::sql_query::Expr<#struct_name> {
+                ::sql_query::ColOps::least(self, val)
+            }
+
             pub fn lower(self) -> ::sql_query::ExprCol<#struct_name> {
                 ::sql_query::ColOps::lower(self)
             }

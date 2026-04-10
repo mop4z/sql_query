@@ -65,6 +65,17 @@ impl<T: Table> ExprBuf<T> {
         self.buf = new_buf;
     }
 
+    fn wrap_fn_val(&mut self, name: &str, val: impl Into<SqlParam>) {
+        let mut new_buf = String::with_capacity(name.len() + 1 + self.buf.len() + 6);
+        new_buf.push_str(name);
+        new_buf.push('(');
+        new_buf.push_str(&self.buf);
+        new_buf.push_str(", ");
+        self.buf = new_buf;
+        self.push_val(val);
+        self.buf.push(')');
+    }
+
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         Ok((self.buf, self.binds.into_vec()))
     }
@@ -160,14 +171,16 @@ impl<T: Table> Expr<T> {
         self
     }
 
-    /// Wrap as `GREATEST(self, other)`.
-    pub fn max(self, other: impl Into<Expr<T>>) -> Self {
-        Expr::greatest(self, other)
+    /// Wrap as `GREATEST(self, val)`.
+    pub fn greatest(mut self, val: impl Into<SqlParam>) -> Self {
+        self.0.wrap_fn_val("GREATEST", val);
+        self
     }
 
-    /// Wrap as `LEAST(self, other)`.
-    pub fn min(self, other: impl Into<Expr<T>>) -> Self {
-        Expr::least(self, other)
+    /// Wrap as `LEAST(self, val)`.
+    pub fn least(mut self, val: impl Into<SqlParam>) -> Self {
+        self.0.wrap_fn_val("LEAST", val);
+        self
     }
 
     /// Append ` + `.
@@ -242,40 +255,6 @@ impl<T: Table> Expr<T> {
     pub fn wrap_raw(mut self, name: &str) -> Self {
         self.0.wrap_fn(name);
         self
-    }
-
-    /// `GREATEST(a, b)` — returns the larger of two expressions.
-    pub fn greatest(a: impl Into<Expr<T>>, b: impl Into<Expr<T>>) -> Self {
-        let a: Expr<T> = a.into();
-        let b: Expr<T> = b.into();
-        let (a_sql, a_binds) = a.0.eval().unwrap();
-        let (b_sql, b_binds) = b.0.eval().unwrap();
-        let mut e = Self::new();
-        e.0.buf.push_str("GREATEST(");
-        e.0.buf.push_str(&a_sql);
-        e.0.buf.push_str(", ");
-        e.0.buf.push_str(&b_sql);
-        e.0.buf.push(')');
-        e.0.binds.extend(a_binds);
-        e.0.binds.extend(b_binds);
-        e
-    }
-
-    /// `LEAST(a, b)` — returns the smaller of two expressions.
-    pub fn least(a: impl Into<Expr<T>>, b: impl Into<Expr<T>>) -> Self {
-        let a: Expr<T> = a.into();
-        let b: Expr<T> = b.into();
-        let (a_sql, a_binds) = a.0.eval().unwrap();
-        let (b_sql, b_binds) = b.0.eval().unwrap();
-        let mut e = Self::new();
-        e.0.buf.push_str("LEAST(");
-        e.0.buf.push_str(&a_sql);
-        e.0.buf.push_str(", ");
-        e.0.buf.push_str(&b_sql);
-        e.0.buf.push(')');
-        e.0.binds.extend(a_binds);
-        e.0.binds.extend(b_binds);
-        e
     }
 
     /// Append `EXISTS (subquery)`.
@@ -718,6 +697,16 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
 
     fn max(self) -> ExprCol<T> {
         Expr::new().column(self).max()
+    }
+
+    fn greatest(self, val: impl Into<SqlParam>) -> Expr<T> {
+        let col_expr: Expr<T> = Expr::new().column(self).into();
+        col_expr.greatest(val)
+    }
+
+    fn least(self, val: impl Into<SqlParam>) -> Expr<T> {
+        let col_expr: Expr<T> = Expr::new().column(self).into();
+        col_expr.least(val)
     }
 
     fn lower(self) -> ExprCol<T> {
@@ -1415,44 +1404,39 @@ mod tests {
     // -- GREATEST / LEAST ----------------------------------------------------
 
     #[test]
-    fn greatest_two_vals() {
-        let (sql, binds) =
-            eval(E::greatest(E::new().val(SqlParam::I32(1)), E::new().val(SqlParam::I32(2))));
+    fn greatest_val() {
+        let (sql, binds) = eval(E::new().val(SqlParam::I32(1)).greatest(SqlParam::I32(2)));
         assert_eq!(sql, "GREATEST($#, $#)");
         assert_eq!(binds, vec![SqlParam::I32(1), SqlParam::I32(2)]);
     }
 
     #[test]
-    fn greatest_val_and_col() {
-        let col: E = E::new().column(TC::CreatedAt).into();
-        let (sql, binds) = eval(E::greatest(E::new().val(SqlParam::String("ts".into())), col));
-        assert_eq!(sql, r#"GREATEST($#, "test_table".created_at)"#);
+    fn greatest_col() {
+        let (sql, binds) = eval(TC::CreatedAt.greatest(SqlParam::String("ts".into())));
+        assert_eq!(sql, r#"GREATEST("test_table".created_at, $#)"#);
         assert_eq!(binds, vec![SqlParam::String("ts".into())]);
     }
 
     #[test]
-    fn least_two_vals() {
-        let (sql, binds) =
-            eval(E::least(E::new().val(SqlParam::I32(10)), E::new().val(SqlParam::I32(20))));
+    fn least_val() {
+        let (sql, binds) = eval(E::new().val(SqlParam::I32(10)).least(SqlParam::I32(20)));
         assert_eq!(sql, "LEAST($#, $#)");
         assert_eq!(binds, vec![SqlParam::I32(10), SqlParam::I32(20)]);
     }
 
     #[test]
     fn greatest_in_case_when() {
-        // closed_at = CASE WHEN $1 THEN GREATEST($2, "t".acquired_at) ELSE NULL END
-        let col: E = E::new().column(TC::CreatedAt).into();
         let (sql, binds) = eval(
             E::new()
                 .column(TC::CreatedAt)
                 .eq()
                 .if_(E::new().val(SqlParam::Bool(true)))
-                .then_(E::greatest(E::new().val(SqlParam::String("ts".into())), col))
+                .then_(TC::CreatedAt.greatest(SqlParam::String("ts".into())))
                 .else_(E::new().null()),
         );
         assert_eq!(
             sql,
-            r#""test_table".created_at = CASE WHEN $# THEN GREATEST($#, "test_table".created_at) ELSE NULL END"#,
+            r#""test_table".created_at = CASE WHEN $# THEN GREATEST("test_table".created_at, $#) ELSE NULL END"#,
         );
         assert_eq!(binds, vec![SqlParam::Bool(true), SqlParam::String("ts".into())],);
     }
@@ -1471,13 +1455,12 @@ mod tests {
 
     #[test]
     fn expr_op_expr_splices_inner() {
-        let (sql, binds) = eval(E::new().column(TC::Name).eq().expr(E::greatest(
-            TC::Name,
-            E::new().now().add().func("make_interval", "hours => ", 24i32),
-        )));
+        let inner: E = E::new().column(TC::Name).into();
+        let (sql, binds) =
+            eval(E::new().column(TC::Name).eq().expr(inner.greatest(SqlParam::I32(24))));
         assert_eq!(
             sql,
-            r#""test_table".name = GREATEST("test_table".name, NOW() + make_interval(hours => $#))"#,
+            r#""test_table".name = GREATEST("test_table".name, $#)"#,
         );
         assert_eq!(binds, vec![SqlParam::I32(24)]);
     }
