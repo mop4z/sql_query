@@ -51,9 +51,10 @@ impl<T: Table> ExprBuf<T> {
         self.buf.push_str(col.as_ref());
     }
 
-    fn push_val(&mut self, v: impl Into<SqlParam>) {
-        self.buf.push_str("$#");
-        self.binds.push(v.into());
+    fn push_eval(&mut self, e: impl EvalExpr) {
+        let (sql, binds) = e.eval().unwrap();
+        self.buf.push_str(&sql);
+        self.binds.extend(binds);
     }
 
     fn wrap_fn(&mut self, name: &str) {
@@ -66,7 +67,8 @@ impl<T: Table> ExprBuf<T> {
     }
 
     fn wrap_fn_expr(&mut self, name: &str, expr_sql: &str, expr_binds: Vec<SqlParam>) {
-        let mut new_buf = String::with_capacity(name.len() + 1 + self.buf.len() + 2 + expr_sql.len() + 1);
+        let mut new_buf =
+            String::with_capacity(name.len() + 1 + self.buf.len() + 2 + expr_sql.len() + 1);
         new_buf.push_str(name);
         new_buf.push('(');
         new_buf.push_str(&self.buf);
@@ -76,8 +78,6 @@ impl<T: Table> ExprBuf<T> {
         self.buf = new_buf;
         self.binds.extend(expr_binds);
     }
-
-
 
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         Ok((self.buf, self.binds.into_vec()))
@@ -124,8 +124,8 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append a bound parameter placeholder.
-    pub fn val(mut self, v: impl Into<SqlParam>) -> Self {
-        self.0.push_val(v);
+    pub fn val(mut self, v: impl EvalExpr) -> Self {
+        self.0.push_eval(v);
         self
     }
 
@@ -165,11 +165,11 @@ impl<T: Table> Expr<T> {
     /// // make_interval(hours => $1)
     /// E::new().func("make_interval", "hours => ", ttl_hours)
     /// ```
-    pub fn func(mut self, name: &str, prefix: &str, v: impl Into<SqlParam>) -> Self {
+    pub fn func(mut self, name: &str, prefix: &str, v: impl EvalExpr) -> Self {
         self.0.buf.push_str(name);
         self.0.buf.push('(');
         self.0.buf.push_str(prefix);
-        self.0.push_val(v);
+        self.0.push_eval(v);
         self.0.buf.push(')');
         self
     }
@@ -323,9 +323,9 @@ impl<T: Table> EvalExpr for Expr<T> {
     }
 }
 
-impl EvalExpr for SqlParam {
+impl<T: Into<SqlParam>> EvalExpr for T {
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
-        Ok(("$#".to_string(), vec![self]))
+        Ok(("$#".to_string(), vec![self.into()]))
     }
 }
 
@@ -408,32 +408,32 @@ impl<T: Table> ExprCol<T> {
 
     // -- set operators -------------------------------------------------------
 
-    pub fn in_(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn in_(mut self, v: impl EvalExpr) -> Expr<T> {
         self.0.push(" IN (");
-        self.0.push_val(v);
+        self.0.push_eval(v);
         self.0.push(")");
         Expr(self.0)
     }
 
-    pub fn not_in(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn not_in(mut self, v: impl EvalExpr) -> Expr<T> {
         self.0.push(" NOT IN (");
-        self.0.push_val(v);
+        self.0.push_eval(v);
         self.0.push(")");
         Expr(self.0)
     }
 
     // -- any / all -----------------------------------------------------------
 
-    pub fn any(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn any(mut self, v: impl EvalExpr) -> Expr<T> {
         self.0.push(" = ANY(");
-        self.0.push_val(v);
+        self.0.push_eval(v);
         self.0.push(")");
         Expr(self.0)
     }
 
-    pub fn all(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn all(mut self, v: impl EvalExpr) -> Expr<T> {
         self.0.push(" = ALL(");
-        self.0.push_val(v);
+        self.0.push_eval(v);
         self.0.push(")");
         Expr(self.0)
     }
@@ -464,15 +464,15 @@ impl<T: Table> ExprCol<T> {
 
     // -- pattern matching ----------------------------------------------------
 
-    pub fn like(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn like(mut self, v: impl EvalExpr) -> Expr<T> {
         self.0.push(" LIKE ");
-        self.0.push_val(v);
+        self.0.push_eval(v);
         Expr(self.0)
     }
 
-    pub fn ilike(mut self, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn ilike(mut self, v: impl EvalExpr) -> Expr<T> {
         self.0.push(" ILIKE ");
-        self.0.push_val(v);
+        self.0.push_eval(v);
         Expr(self.0)
     }
 
@@ -490,11 +490,11 @@ impl<T: Table> ExprCol<T> {
 
     // -- range ---------------------------------------------------------------
 
-    pub fn between(mut self, lo: impl Into<SqlParam>, hi: impl Into<SqlParam>) -> Expr<T> {
+    pub fn between(mut self, lo: impl EvalExpr, hi: impl EvalExpr) -> Expr<T> {
         self.0.push(" BETWEEN ");
-        self.0.push_val(lo);
+        self.0.push_eval(lo);
         self.0.push(" AND ");
-        self.0.push_val(hi);
+        self.0.push_eval(hi);
         Expr(self.0)
     }
 
@@ -537,48 +537,48 @@ impl<T: Table> ExprCol<T> {
 
     // -- json ----------------------------------------------------------------
 
-    pub fn json_get(mut self, key: impl Into<SqlParam>) -> ExprCol<T> {
+    pub fn json_get(mut self, key: impl EvalExpr) -> ExprCol<T> {
         self.0.push(" -> ");
-        self.0.push_val(key);
+        self.0.push_eval(key);
         self
     }
 
-    pub fn json_get_text(mut self, key: impl Into<SqlParam>) -> ExprCol<T> {
+    pub fn json_get_text(mut self, key: impl EvalExpr) -> ExprCol<T> {
         self.0.push(" ->> ");
-        self.0.push_val(key);
+        self.0.push_eval(key);
         self
     }
 
     /// `col ->> key = val` JSONB text equality.
-    pub fn jsonb_text_eq(mut self, key: impl Into<SqlParam>, val: impl Into<SqlParam>) -> Expr<T> {
+    pub fn jsonb_text_eq(mut self, key: impl EvalExpr, val: impl EvalExpr) -> Expr<T> {
         self.0.push(" ->> ");
-        self.0.push_val(key);
+        self.0.push_eval(key);
         self.0.push(" = ");
-        self.0.push_val(val);
+        self.0.push_eval(val);
         Expr(self.0)
     }
 
     /// `col #> path` JSON path get.
-    pub fn json_path(mut self, path: impl Into<SqlParam>) -> ExprCol<T> {
+    pub fn json_path(mut self, path: impl EvalExpr) -> ExprCol<T> {
         self.0.push(" #> ");
-        self.0.push_val(path);
+        self.0.push_eval(path);
         self
     }
 
     /// `col #>> path` JSON path get as text.
-    pub fn json_path_text(mut self, path: impl Into<SqlParam>) -> ExprCol<T> {
+    pub fn json_path_text(mut self, path: impl EvalExpr) -> ExprCol<T> {
         self.0.push(" #>> ");
-        self.0.push_val(path);
+        self.0.push_eval(path);
         self
     }
 
     // -- coalesce ------------------------------------------------------------
 
     /// Wrap buffer: `COALESCE(buf, fallback)`.
-    pub fn coalesce(mut self, fallback: impl Into<SqlParam>) -> Self {
+    pub fn coalesce(mut self, fallback: impl EvalExpr) -> Self {
         self.0.buf.insert_str(0, "COALESCE(");
         self.0.push(", ");
-        self.0.push_val(fallback);
+        self.0.push_eval(fallback);
         self.0.push(")");
         self
     }
@@ -655,47 +655,47 @@ impl<T: Table> EvalExpr for ExprCol<T> {
 /// All methods have default implementations that delegate to the expression
 /// builder, so the derive macro only needs to generate an empty impl.
 pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
-    fn eq(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn eq(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).eq().val(val)
     }
 
-    fn neq(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn neq(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).neq().val(val)
     }
 
-    fn gt(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn gt(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).gt().val(val)
     }
 
-    fn gte(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn gte(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).gte().val(val)
     }
 
-    fn lt(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn lt(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).lt().val(val)
     }
 
-    fn lte(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn lte(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).lte().val(val)
     }
 
-    fn like(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn like(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).like(val)
     }
 
-    fn ilike(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn ilike(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).ilike(val)
     }
 
-    fn in_(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn in_(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).in_(val)
     }
 
-    fn not_in(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn not_in(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).not_in(val)
     }
 
-    fn between(self, lo: impl Into<SqlParam>, hi: impl Into<SqlParam>) -> Expr<T> {
+    fn between(self, lo: impl EvalExpr, hi: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).between(lo, hi)
     }
 
@@ -761,19 +761,19 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
         Expr::new().column(self).date()
     }
 
-    fn json_get(self, key: impl Into<SqlParam>) -> ExprCol<T> {
+    fn json_get(self, key: impl EvalExpr) -> ExprCol<T> {
         Expr::new().column(self).json_get(key)
     }
 
-    fn json_get_text(self, key: impl Into<SqlParam>) -> ExprCol<T> {
+    fn json_get_text(self, key: impl EvalExpr) -> ExprCol<T> {
         Expr::new().column(self).json_get_text(key)
     }
 
-    fn any(self, val: impl Into<SqlParam>) -> Expr<T> {
+    fn any(self, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).any(val)
     }
 
-    fn jsonb_text_eq(self, key: impl Into<SqlParam>, val: impl Into<SqlParam>) -> Expr<T> {
+    fn jsonb_text_eq(self, key: impl EvalExpr, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).jsonb_text_eq(key, val)
     }
 
@@ -806,8 +806,8 @@ impl<T: Table> ExprOp<T> {
     }
 
     /// Append a bound parameter placeholder.
-    pub fn val(mut self, v: impl Into<SqlParam>) -> Expr<T> {
-        self.0.push_val(v);
+    pub fn val(mut self, v: impl EvalExpr) -> Expr<T> {
+        self.0.push_eval(v);
         Expr(self.0)
     }
 
@@ -844,11 +844,11 @@ impl<T: Table> ExprOp<T> {
     /// // make_interval(hours => $1)
     /// E::new().func("make_interval", "hours => ", ttl_hours)
     /// ```
-    pub fn func(mut self, name: &str, prefix: &str, v: impl Into<SqlParam>) -> Expr<T> {
+    pub fn func(mut self, name: &str, prefix: &str, v: impl EvalExpr) -> Expr<T> {
         self.0.buf.push_str(name);
         self.0.buf.push('(');
         self.0.buf.push_str(prefix);
-        self.0.push_val(v);
+        self.0.push_eval(v);
         self.0.buf.push(')');
         Expr(self.0)
     }
