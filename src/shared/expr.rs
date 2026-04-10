@@ -255,6 +255,16 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    pub fn unnest(mut self) -> Self {
+        self.0.wrap_fn("UNNEST");
+        self
+    }
+
+    pub fn date(mut self) -> Self {
+        self.0.wrap_fn("DATE");
+        self
+    }
+
     /// Wrap the buffer with an arbitrary function: `name(buf)`.
     /// Escape hatch for functions not yet supported as dedicated methods.
     pub fn wrap_raw(mut self, name: &str) -> Self {
@@ -589,6 +599,11 @@ impl<T: Table> ExprCol<T> {
         self
     }
 
+    pub fn date(mut self) -> Self {
+        self.0.wrap_fn("DATE");
+        self
+    }
+
     // -- cast / wrap ---------------------------------------------------------
 
     /// Append a type cast: `::ty`.
@@ -729,6 +744,10 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
 
     fn abs(self) -> ExprCol<T> {
         Expr::new().column(self).abs()
+    }
+
+    fn date(self) -> ExprCol<T> {
+        Expr::new().column(self).date()
     }
 
     fn json_get(self, key: impl Into<SqlParam>) -> ExprCol<T> {

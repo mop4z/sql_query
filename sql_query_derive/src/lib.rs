@@ -181,6 +181,10 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::abs(self)
             }
 
+            pub fn date(self) -> ::sql_query::ExprCol<#struct_name> {
+                ::sql_query::ColOps::date(self)
+            }
+
             pub fn json_get(self, key: impl Into<::sql_query::SqlParam>) -> ::sql_query::ExprCol<#struct_name> {
                 ::sql_query::ColOps::json_get(self, key)
             }
