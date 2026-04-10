@@ -14,6 +14,7 @@ pub struct SqlUpdate {
     table: &'static str,
     set_clauses: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     from_tables: Vec<String>,
+    from_binds: Vec<SqlParam>,
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
     ctes: Vec<Cte>,
@@ -30,6 +31,7 @@ impl SqlUpdate {
             table: T::TABLE_NAME,
             set_clauses: Vec::new(),
             from_tables: Vec::new(),
+            from_binds: Vec::new(),
             filters: Vec::new(),
             returning: Returning::None,
             ctes,
@@ -52,6 +54,20 @@ impl SqlUpdate {
         s.push_str(T::TABLE_NAME);
         s.push('"');
         self.from_tables.push(s);
+        self
+    }
+
+    /// Add a `FROM (subquery) alias` clause for referencing a subquery in SET/WHERE.
+    pub fn from_subquery(mut self, alias: &str, query: impl SqlBase) -> Self {
+        let uq = query.build().expect("from_subquery build failed");
+        let (sub_sql, sub_binds) = uq.into_raw();
+        let mut s = String::with_capacity(sub_sql.len() + alias.len() + 4);
+        s.push('(');
+        s.push_str(&sub_sql);
+        s.push_str(") ");
+        s.push_str(alias);
+        self.from_tables.push(s);
+        self.from_binds.extend(sub_binds);
         self
     }
 
@@ -126,6 +142,7 @@ impl SqlBase for SqlUpdate {
         if !self.from_tables.is_empty() {
             sql.push_str(" FROM ");
             sql.push_str(&self.from_tables.join(", "));
+            binds.extend(self.from_binds);
         }
 
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
@@ -337,5 +354,26 @@ mod tests {
         );
         assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1, "users".age = $2"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::Null]);
+    }
+
+    #[test]
+    fn update_from_subquery() {
+        let sub = crate::select::SqlSelect::new::<Posts>()
+            .from([PExpr::new().column(PostsCol::UserId)])
+            .filter([PostsCol::Title.eq("hello")]);
+        let (sql, binds) = build(
+            SqlUpdate::new::<Users>()
+                .set([UsersCol::Name.eq("updated")])
+                .from_subquery("sub", sub)
+                .filter([UExpr::new().raw("\"users\".id = sub.user_id")]),
+        );
+        assert_eq!(
+            sql,
+            r#"UPDATE "users" SET "users".name = $1 FROM (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND "posts".title = $2) sub WHERE 1=1 AND "users".id = sub.user_id"#,
+        );
+        assert_eq!(
+            binds,
+            vec![SqlParam::String("updated".into()), SqlParam::String("hello".into())],
+        );
     }
 }
