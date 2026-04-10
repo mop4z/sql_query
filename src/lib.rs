@@ -14,10 +14,11 @@ extern crate self as sql_query;
 use crate::{delete::SqlDelete, insert::SqlInsert, shared::Cte, update::SqlUpdate};
 
 pub use select::SqlSelect;
+pub use set_op::SqlSetOp;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
     error::SqlQueryError,
-    expr::{ColOps, EvalExpr, Expr, SqlJoin, SqlOrder},
+    expr::{ColOps, EvalExpr, Expr, FrameBound, SqlJoin, SqlOrder, WindowSpec},
     unbinded_query::{
         BoundQuery, BoundQueryAs, BoundQueryScalar, CachedBoundQueryAs, CachedBoundQueryScalar,
         UnbindedQuery,
@@ -29,6 +30,7 @@ pub use sql_query_derive::{SqlCols, SqlParamEnum};
 mod delete;
 mod insert;
 mod select;
+pub(crate) mod set_op;
 mod shared;
 mod update;
 

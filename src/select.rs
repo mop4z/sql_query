@@ -1,5 +1,6 @@
 use crate::{
     SqlBase,
+    set_op::SqlSetOp,
     shared::{
         Cte, Table, UnbindedQuery,
         error::SqlQueryError,
@@ -132,6 +133,36 @@ impl SqlSelect {
     pub fn having<T: Table>(mut self, conditions: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.having.extend(conditions.into_iter().map(|x| x.eval()));
         self
+    }
+
+    /// Combine with another SELECT using `UNION` (deduplicates rows).
+    pub fn union(self, other: SqlSelect) -> SqlSetOp {
+        SqlSetOp::new(self, other)
+    }
+
+    /// Combine with another SELECT using `UNION ALL` (keeps duplicates).
+    pub fn union_all(self, other: SqlSelect) -> SqlSetOp {
+        SqlSetOp::new_all(self, other)
+    }
+
+    /// Combine with another SELECT using `INTERSECT`.
+    pub fn intersect(self, other: SqlSelect) -> SqlSetOp {
+        SqlSetOp::new_intersect(self, other)
+    }
+
+    /// Combine with another SELECT using `INTERSECT ALL`.
+    pub fn intersect_all(self, other: SqlSelect) -> SqlSetOp {
+        SqlSetOp::new_intersect_all(self, other)
+    }
+
+    /// Combine with another SELECT using `EXCEPT`.
+    pub fn except(self, other: SqlSelect) -> SqlSetOp {
+        SqlSetOp::new_except(self, other)
+    }
+
+    /// Combine with another SELECT using `EXCEPT ALL`.
+    pub fn except_all(self, other: SqlSelect) -> SqlSetOp {
+        SqlSetOp::new_except_all(self, other)
     }
 }
 

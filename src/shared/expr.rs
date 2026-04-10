@@ -429,6 +429,22 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Append `OVER (window_spec)` — window function clause.
+    ///
+    /// ```ignore
+    /// // SUM("employees".salary) OVER (PARTITION BY "employees".dept)
+    /// EmployeesCol::Salary.sum().over(
+    ///     WindowSpec::new().partition_by(EmployeesCol::Dept.col())
+    /// )
+    /// ```
+    pub fn over(mut self, spec: WindowSpec) -> Self {
+        let (sql, binds) = spec.render();
+        self.0.push(" ");
+        self.0.push(&sql);
+        self.0.binds.extend(binds);
+        self
+    }
+
     /// Wrap as `UNNEST(buf)` — expand a Postgres array into rows.
     pub fn unnest(mut self) -> Self {
         self.0.wrap_fn("UNNEST");
@@ -649,6 +665,68 @@ impl<T: Table> Expr<T> {
         self.0.buf.push(')');
         self.0.binds.extend(sub_binds);
         self
+    }
+
+    // -- window function constructors ----------------------------------------
+
+    fn window_fn(name: &str, col: impl EvalExpr) -> Self {
+        let mut e = Self::new();
+        e.0.push(name);
+        e.0.push("(");
+        e.0.push_eval(col);
+        e.0.push(")");
+        e
+    }
+
+    /// `ROW_NUMBER()` — sequential row number within partition.
+    pub fn row_number() -> Self {
+        Self::new().raw("ROW_NUMBER()")
+    }
+
+    /// `RANK()` — rank with gaps for ties.
+    pub fn rank() -> Self {
+        Self::new().raw("RANK()")
+    }
+
+    /// `DENSE_RANK()` — rank without gaps.
+    pub fn dense_rank() -> Self {
+        Self::new().raw("DENSE_RANK()")
+    }
+
+    /// `NTILE(n)` — distribute rows into n buckets.
+    pub fn ntile(n: u32) -> Self {
+        let mut e = Self::new();
+        e.0.push(&format!("NTILE({n})"));
+        e
+    }
+
+    /// `LAG(expr)` — value from previous row in partition.
+    pub fn lag(col: impl EvalExpr) -> Self {
+        Self::window_fn("LAG", col)
+    }
+
+    /// `LEAD(expr)` — value from next row in partition.
+    pub fn lead(col: impl EvalExpr) -> Self {
+        Self::window_fn("LEAD", col)
+    }
+
+    /// `FIRST_VALUE(expr)` — first value in window frame.
+    pub fn first_value(col: impl EvalExpr) -> Self {
+        Self::window_fn("FIRST_VALUE", col)
+    }
+
+    /// `LAST_VALUE(expr)` — last value in window frame.
+    pub fn last_value(col: impl EvalExpr) -> Self {
+        Self::window_fn("LAST_VALUE", col)
+    }
+
+    /// `NTH_VALUE(expr, n)` — nth value in window frame.
+    pub fn nth_value(col: impl EvalExpr, n: u32) -> Self {
+        let mut e = Self::window_fn("NTH_VALUE", col);
+        // Reopen the closing paren to append ", n"
+        e.0.buf.pop(); // remove ')'
+        e.0.push(&format!(", {n})"));
+        e
     }
 
     // -- CASE WHEN -----------------------------------------------------------
@@ -907,6 +985,118 @@ impl<T: Table> ExprThen<T> {
         self.0.binds.extend(binds);
         self.0.push(" END");
         Expr(self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WindowSpec — OVER (...) clause builder
+// ---------------------------------------------------------------------------
+
+/// Boundary for a window frame (ROWS/RANGE BETWEEN ... AND ...).
+#[derive(Debug, Clone)]
+pub enum FrameBound {
+    UnboundedPreceding,
+    Preceding(u64),
+    CurrentRow,
+    Following(u64),
+    UnboundedFollowing,
+}
+
+impl FrameBound {
+    fn to_sql(&self) -> String {
+        match self {
+            Self::UnboundedPreceding => "UNBOUNDED PRECEDING".into(),
+            Self::Preceding(n) => format!("{n} PRECEDING"),
+            Self::CurrentRow => "CURRENT ROW".into(),
+            Self::Following(n) => format!("{n} FOLLOWING"),
+            Self::UnboundedFollowing => "UNBOUNDED FOLLOWING".into(),
+        }
+    }
+}
+
+/// Builder for the `OVER (...)` clause of a window function.
+///
+/// ```ignore
+/// // SUM("employees".salary) OVER (PARTITION BY "employees".dept ORDER BY "employees".name ASC)
+/// EmployeesCol::Salary.sum().over(
+///     WindowSpec::new()
+///         .partition_by(EmployeesCol::Dept.col())
+///         .order_by(EmployeesCol::Name.col(), SqlOrder::Asc)
+/// )
+/// ```
+#[derive(Debug, Clone)]
+pub struct WindowSpec {
+    partition_by: Vec<String>,
+    order_by: Vec<String>,
+    binds: Vec<SqlParam>,
+    frame: Option<(&'static str, FrameBound, FrameBound)>,
+}
+
+impl WindowSpec {
+    pub fn new() -> Self {
+        Self {
+            partition_by: Vec::new(),
+            order_by: Vec::new(),
+            binds: Vec::new(),
+            frame: None,
+        }
+    }
+
+    /// Add a PARTITION BY expression.
+    pub fn partition_by(mut self, col: impl EvalExpr) -> Self {
+        let (sql, binds) = col.eval().unwrap();
+        self.partition_by.push(sql);
+        self.binds.extend(binds);
+        self
+    }
+
+    /// Add an ORDER BY expression with direction.
+    pub fn order_by(mut self, col: impl EvalExpr, order: SqlOrder) -> Self {
+        let (sql, binds) = col.eval().unwrap();
+        self.order_by.push(format!("{} {}", sql, order.as_ref()));
+        self.binds.extend(binds);
+        self
+    }
+
+    /// Set the frame clause: `ROWS BETWEEN start AND end`.
+    pub fn rows_between(mut self, start: FrameBound, end: FrameBound) -> Self {
+        self.frame = Some(("ROWS", start, end));
+        self
+    }
+
+    /// Set the frame clause: `RANGE BETWEEN start AND end`.
+    pub fn range_between(mut self, start: FrameBound, end: FrameBound) -> Self {
+        self.frame = Some(("RANGE", start, end));
+        self
+    }
+
+    fn render(self) -> (String, Vec<SqlParam>) {
+        let mut sql = String::from("OVER (");
+
+        if !self.partition_by.is_empty() {
+            sql.push_str("PARTITION BY ");
+            sql.push_str(&self.partition_by.join(", "));
+        }
+
+        if !self.order_by.is_empty() {
+            if !self.partition_by.is_empty() {
+                sql.push(' ');
+            }
+            sql.push_str("ORDER BY ");
+            sql.push_str(&self.order_by.join(", "));
+        }
+
+        if let Some((kind, start, end)) = self.frame {
+            sql.push(' ');
+            sql.push_str(kind);
+            sql.push_str(" BETWEEN ");
+            sql.push_str(&start.to_sql());
+            sql.push_str(" AND ");
+            sql.push_str(&end.to_sql());
+        }
+
+        sql.push(')');
+        (sql, self.binds)
     }
 }
 

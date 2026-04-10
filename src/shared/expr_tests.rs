@@ -570,3 +570,103 @@ fn func_after_eq() {
     assert_eq!(sql, r#""test_table".age = make_interval(hours => $#)"#);
     assert_eq!(binds, vec![SqlParam::I32(5)]);
 }
+
+// -- Window functions ----------------------------------------------------
+
+#[test]
+fn row_number_over_partition_order() {
+    let (sql, _) = eval(
+        E::row_number().over(
+            WindowSpec::new()
+                .partition_by(TC::Name.col())
+                .order_by(TC::Age.col(), SqlOrder::Desc),
+        ),
+    );
+    assert_eq!(
+        sql,
+        r#"ROW_NUMBER() OVER (PARTITION BY "test_table".name ORDER BY "test_table".age DESC)"#,
+    );
+}
+
+#[test]
+fn sum_over_empty() {
+    let (sql, _) = eval(E::new().column(TC::Age).sum().over(WindowSpec::new()));
+    assert_eq!(sql, r#"SUM("test_table".age) OVER ()"#);
+}
+
+#[test]
+fn rank_over_order_only() {
+    let (sql, _) = eval(
+        E::rank().over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Asc)),
+    );
+    assert_eq!(sql, r#"RANK() OVER (ORDER BY "test_table".age ASC)"#);
+}
+
+#[test]
+fn count_over_multiple_partitions() {
+    let (sql, _) = eval(
+        E::new()
+            .column(TC::Age)
+            .count()
+            .over(WindowSpec::new().partition_by(TC::Name.col()).partition_by(TC::Email.col())),
+    );
+    assert_eq!(
+        sql,
+        r#"COUNT("test_table".age) OVER (PARTITION BY "test_table".name, "test_table".email)"#,
+    );
+}
+
+#[test]
+fn lag_over() {
+    let (sql, _) = eval(
+        E::lag(TC::Age.col()).over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Asc)),
+    );
+    assert_eq!(
+        sql,
+        r#"LAG("test_table".age) OVER (ORDER BY "test_table".age ASC)"#,
+    );
+}
+
+#[test]
+fn first_value_with_frame() {
+    let (sql, _) = eval(
+        E::first_value(TC::Name.col()).over(
+            WindowSpec::new()
+                .order_by(TC::Age.col(), SqlOrder::Asc)
+                .rows_between(FrameBound::UnboundedPreceding, FrameBound::CurrentRow),
+        ),
+    );
+    assert_eq!(
+        sql,
+        r#"FIRST_VALUE("test_table".name) OVER (ORDER BY "test_table".age ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"#,
+    );
+}
+
+#[test]
+fn filter_and_over() {
+    let (sql, binds) = eval(
+        E::new()
+            .raw("*")
+            .count()
+            .filter(TC::Age.gt(18i32))
+            .over(WindowSpec::new().partition_by(TC::Name.col())),
+    );
+    assert_eq!(
+        sql,
+        r#"COUNT(*) FILTER (WHERE "test_table".age > $#) OVER (PARTITION BY "test_table".name)"#,
+    );
+    assert_eq!(binds, vec![SqlParam::I32(18)]);
+}
+
+#[test]
+fn window_with_alias() {
+    let (sql, _) = eval(
+        E::dense_rank()
+            .over(WindowSpec::new().order_by(TC::Age.col(), SqlOrder::Desc))
+            .alias("rank"),
+    );
+    assert_eq!(
+        sql,
+        r#"DENSE_RANK() OVER (ORDER BY "test_table".age DESC) AS rank"#,
+    );
+}
