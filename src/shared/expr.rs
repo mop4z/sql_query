@@ -276,19 +276,38 @@ impl<T: Table> Expr<T> {
 
     // -- set operators -------------------------------------------------------
 
-    /// Append ` IN ($1)`. Pass an array `SqlParam` for multi-value IN.
+    /// Append ` IN ($1)` for a scalar, or ` = ANY($1)` when `v` evaluates to a
+    /// single array bind — Postgres rejects `col IN (array)` (it expects a
+    /// tuple), so array inputs are rewritten into the equivalent ANY form.
     pub fn in_(mut self, v: impl EvalExpr) -> Self {
-        self.0.push(" IN (");
-        self.0.push_eval(v);
-        self.0.push(")");
+        let (sql, binds) = v.eval().unwrap();
+        if binds.len() == 1 && binds[0].is_array() {
+            self.0.push(" = ANY(");
+            self.0.push(&sql);
+            self.0.push(")");
+        } else {
+            self.0.push(" IN (");
+            self.0.push(&sql);
+            self.0.push(")");
+        }
+        self.0.binds.extend(binds);
         self
     }
 
-    /// Append ` NOT IN ($1)`.
+    /// Append ` NOT IN ($1)` for a scalar, or ` <> ALL($1)` when `v` evaluates
+    /// to a single array bind.
     pub fn not_in(mut self, v: impl EvalExpr) -> Self {
-        self.0.push(" NOT IN (");
-        self.0.push_eval(v);
-        self.0.push(")");
+        let (sql, binds) = v.eval().unwrap();
+        if binds.len() == 1 && binds[0].is_array() {
+            self.0.push(" <> ALL(");
+            self.0.push(&sql);
+            self.0.push(")");
+        } else {
+            self.0.push(" NOT IN (");
+            self.0.push(&sql);
+            self.0.push(")");
+        }
+        self.0.binds.extend(binds);
         self
     }
 

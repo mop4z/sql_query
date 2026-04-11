@@ -90,6 +90,20 @@ impl SqlParam {
         matches!(self, SqlParam::Null)
     }
 
+    pub fn is_array(&self) -> bool {
+        matches!(
+            self,
+            SqlParam::StringArray(_)
+                | SqlParam::I32Array(_)
+                | SqlParam::I64Array(_)
+                | SqlParam::F64Array(_)
+                | SqlParam::BoolArray(_)
+                | SqlParam::DecimalArray(_)
+                | SqlParam::DateTimeUtcArray(_)
+                | SqlParam::UuidArray(_)
+        )
+    }
+
     pub fn custom<T>(val: T) -> Self
     where
         T: for<'q> Encode<'q, Postgres>

@@ -143,16 +143,22 @@ fn is_not_null() {
 // -- IN / NOT IN ---------------------------------------------------------
 
 #[test]
-fn in_array() {
+fn in_array_becomes_any() {
     let (sql, binds) = eval(E::new().column(TC::Age).in_(SqlParam::I32Array(vec![1, 2, 3])));
-    assert_eq!(sql, r#""test_table".age IN ($#)"#);
+    assert_eq!(sql, r#""test_table".age = ANY($#)"#);
     assert_eq!(binds, vec![SqlParam::I32Array(vec![1, 2, 3])]);
 }
 
 #[test]
-fn not_in_array() {
+fn not_in_array_becomes_all() {
     let (sql, _) = eval(E::new().column(TC::Age).not_in(SqlParam::I32Array(vec![1])));
-    assert_eq!(sql, r#""test_table".age NOT IN ($#)"#);
+    assert_eq!(sql, r#""test_table".age <> ALL($#)"#);
+}
+
+#[test]
+fn in_scalar_stays_in() {
+    let (sql, _) = eval(E::new().column(TC::Age).in_(SqlParam::I32(1)));
+    assert_eq!(sql, r#""test_table".age IN ($#)"#);
 }
 
 // -- LIKE / ILIKE --------------------------------------------------------
@@ -242,8 +248,7 @@ fn raw_pass_through() {
 
 #[test]
 fn and_chain() {
-    let (sql, _) =
-        eval(E::new().column(TC::Name).eq("alice").and(TC::Age.gt(SqlParam::I32(18))));
+    let (sql, _) = eval(E::new().column(TC::Name).eq("alice").and(TC::Age.gt(SqlParam::I32(18))));
     assert_eq!(sql, r#"("test_table".name = $#) AND "test_table".age > $#"#);
 }
 
@@ -416,8 +421,7 @@ fn cast_on_col() {
 
 #[test]
 fn paren_wrap() {
-    let (sql, _) =
-        eval(E::new().column(TC::Name).eq("a").or_bare(TC::Name.eq("b")).paren());
+    let (sql, _) = eval(E::new().column(TC::Name).eq("a").or_bare(TC::Name.eq("b")).paren());
     assert_eq!(sql, r#"("test_table".name = $# OR "test_table".name = $#)"#);
 }
 
