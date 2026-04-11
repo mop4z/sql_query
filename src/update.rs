@@ -124,6 +124,7 @@ impl SqlBase for SqlUpdate {
         prepend_ctes(self.ctes, &mut sql, &mut binds);
 
         let include_nulls = self.include_nulls;
+        let target_prefix = format!("\"{}\".", self.table);
         let mut set_count = 0;
         for result in self.set_clauses {
             let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -136,7 +137,10 @@ impl SqlBase for SqlUpdate {
             if set_count > 0 {
                 sql.push_str(", ");
             }
-            sql.push_str(&clause);
+            // Postgres rejects qualified SET targets ("table".col = ...) —
+            // strip the target-table prefix from the LHS if present.
+            let clause = clause.strip_prefix(&target_prefix).unwrap_or(&clause);
+            sql.push_str(clause);
             binds.extend(params);
             set_count += 1;
         }
@@ -205,7 +209,7 @@ mod tests {
     #[test]
     fn update_single_set() {
         let (sql, binds) = build(SqlUpdate::new::<Users>().set([UsersCol::Name.eq("alice")]));
-        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1"#);
+        assert_eq!(sql, r#"UPDATE "users" SET name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -214,7 +218,7 @@ mod tests {
         let (sql, binds) = build(
             SqlUpdate::new::<Users>().set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)]),
         );
-        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1, "users".age = $2"#);
+        assert_eq!(sql, r#"UPDATE "users" SET name = $1, age = $2"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
     }
 
@@ -225,7 +229,7 @@ mod tests {
                 .set([UsersCol::Name.eq("bob")])
                 .filter([UsersCol::Id.eq(1i32)]),
         );
-        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1 WHERE 1=1 AND "users".id = $2"#,);
+        assert_eq!(sql, r#"UPDATE "users" SET name = $1 WHERE 1=1 AND "users".id = $2"#,);
         assert_eq!(binds, vec![SqlParam::String("bob".into()), SqlParam::I32(1)]);
     }
 
@@ -239,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".name = $1 WHERE 1=1 AND "users".id = $2 RETURNING *"#,
+            r#"UPDATE "users" SET name = $1 WHERE 1=1 AND "users".id = $2 RETURNING *"#,
         );
         assert_eq!(binds, vec![SqlParam::String("bob".into()), SqlParam::I32(1)]);
     }
@@ -250,7 +254,7 @@ mod tests {
             SqlUpdate::new::<Users>()
                 .set([UExpr::new().column(UsersCol::Name).eq(UExpr::new().now())]),
         );
-        assert_eq!(sql, r#"UPDATE "users" SET "users".name = NOW()"#);
+        assert_eq!(sql, r#"UPDATE "users" SET name = NOW()"#);
         assert!(binds.is_empty());
     }
 
@@ -263,7 +267,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".name = $1, "users".age = $2 WHERE 1=1 AND "users".name = $3 AND "users".age > $4"#,
+            r#"UPDATE "users" SET name = $1, age = $2 WHERE 1=1 AND "users".name = $3 AND "users".age > $4"#,
         );
         assert_eq!(
             binds,
@@ -285,7 +289,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".age = $1 WHERE 1=1 AND ("users".name = $2) OR "users".name = $3"#,
+            r#"UPDATE "users" SET age = $1 WHERE 1=1 AND ("users".name = $2) OR "users".name = $3"#,
         );
         assert_eq!(
             binds,
@@ -307,7 +311,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".name = $1 FROM "posts" WHERE 1=1 AND "users".id = $2"#,
+            r#"UPDATE "users" SET name = $1 FROM "posts" WHERE 1=1 AND "users".id = $2"#,
         );
         assert_eq!(binds, vec![SqlParam::String("updated".into()), SqlParam::I32(1)]);
     }
@@ -323,7 +327,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".name = $1 FROM "posts" WHERE 1=1 AND "users".id = $2 AND "posts".title = $3"#,
+            r#"UPDATE "users" SET name = $1 FROM "posts" WHERE 1=1 AND "users".id = $2 AND "posts".title = $3"#,
         );
         assert_eq!(
             binds,
@@ -341,7 +345,7 @@ mod tests {
             SqlUpdate::new::<Users>()
                 .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)]),
         );
-        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1"#);
+        assert_eq!(sql, r#"UPDATE "users" SET name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -352,7 +356,7 @@ mod tests {
                 .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
                 .include_nulls(),
         );
-        assert_eq!(sql, r#"UPDATE "users" SET "users".name = $1, "users".age = $2"#);
+        assert_eq!(sql, r#"UPDATE "users" SET name = $1, age = $2"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::Null]);
     }
 
@@ -369,7 +373,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET "users".name = $1 FROM (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND "posts".title = $2) sub WHERE 1=1 AND "users".id = sub.user_id"#,
+            r#"UPDATE "users" SET name = $1 FROM (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND "posts".title = $2) sub WHERE 1=1 AND "users".id = sub.user_id"#,
         );
         assert_eq!(
             binds,

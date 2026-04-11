@@ -82,6 +82,7 @@ pub enum SqlParam {
     DateTimeUtcArray(Vec<DateTime<Utc>>),
     UuidArray(Vec<Uuid>),
     Custom(Box<dyn SqlParamCustom>),
+    CustomArray(Box<dyn SqlParamCustom>),
     Null,
 }
 
@@ -101,6 +102,7 @@ impl SqlParam {
                 | SqlParam::DecimalArray(_)
                 | SqlParam::DateTimeUtcArray(_)
                 | SqlParam::UuidArray(_)
+                | SqlParam::CustomArray(_)
         )
     }
 
@@ -145,6 +147,7 @@ impl fmt::Debug for SqlParam {
             Self::DateTimeUtcArray(v) => f.debug_tuple("DateTimeUtcArray").field(v).finish(),
             Self::UuidArray(v) => f.debug_tuple("UuidArray").field(v).finish(),
             Self::Custom(v) => v.debug_fmt(f),
+            Self::CustomArray(v) => v.debug_fmt(f),
             Self::Null => write!(f, "Null"),
         }
     }
@@ -172,6 +175,7 @@ impl Clone for SqlParam {
             Self::DateTimeUtcArray(v) => Self::DateTimeUtcArray(v.clone()),
             Self::UuidArray(v) => Self::UuidArray(v.clone()),
             Self::Custom(v) => Self::Custom(v.clone_box()),
+            Self::CustomArray(v) => Self::CustomArray(v.clone_box()),
             Self::Null => Self::Null,
         }
     }
@@ -301,7 +305,7 @@ where
 
 impl<T: SqlEnum> From<Vec<T>> for SqlParam {
     fn from(value: Vec<T>) -> Self {
-        SqlParam::custom(value)
+        SqlParam::CustomArray(Box::new(value))
     }
 }
 
@@ -326,7 +330,7 @@ macro_rules! type_info_dispatch {
 impl<'q> Encode<'q, Postgres> for SqlParam {
     fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
         match self {
-            SqlParam::Custom(v) => v.encode_param(buf),
+            SqlParam::Custom(v) | SqlParam::CustomArray(v) => v.encode_param(buf),
             SqlParam::Null => Ok(IsNull::Yes),
             other => {
                 encode_dispatch!(other, buf, encode_by_ref;
@@ -343,7 +347,7 @@ impl<'q> Encode<'q, Postgres> for SqlParam {
 
     fn produces(&self) -> Option<<Postgres as Database>::TypeInfo> {
         match self {
-            SqlParam::Custom(v) => Some(v.type_info_param()),
+            SqlParam::Custom(v) | SqlParam::CustomArray(v) => Some(v.type_info_param()),
             SqlParam::Null => Some(<() as Type<Postgres>>::type_info()),
             other => Some(type_info_dispatch!(other;
                 String(String), I16(i16), I32(i32), I64(i64), F64(f64), Bool(bool),
