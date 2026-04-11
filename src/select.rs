@@ -67,18 +67,22 @@ impl SqlSelect {
     pub fn join<T1: Table, T2: Table>(
         mut self,
         sql_join: SqlJoin,
-        t1_col: Expr<T1>,
-        t2_col: Expr<T2>,
+        t1_col: impl Into<Expr<T1>>,
+        t2_col: impl Into<Expr<T2>>,
     ) -> Self {
         let mut s = String::with_capacity(64);
         s.push_str(sql_join.as_ref());
         s.push_str(" JOIN \"");
         s.push_str(T1::TABLE_NAME);
         s.push_str("\" ON ");
-        s.push_str(&t1_col.eval().unwrap().0);
+        let (t1_sql, t1_binds) = t1_col.into().eval().unwrap();
+        s.push_str(&t1_sql);
         s.push_str(" = ");
-        s.push_str(&t2_col.eval().unwrap().0);
+        let (t2_sql, t2_binds) = t2_col.into().eval().unwrap();
+        s.push_str(&t2_sql);
         self.joined_tables.push(s);
+        self.join_binds.extend(t1_binds);
+        self.join_binds.extend(t2_binds);
         self
     }
 

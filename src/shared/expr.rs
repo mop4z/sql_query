@@ -653,11 +653,8 @@ impl<T: Table> Expr<T> {
     // -- splice expression ---------------------------------------------------
 
     /// Splice another expression's SQL and binds into the current position.
-    pub fn expr(mut self, e: impl Into<Expr<T>>) -> Self {
-        let e: Expr<T> = e.into();
-        let (sql, binds) = e.0.eval().unwrap();
-        self.0.buf.push_str(&sql);
-        self.0.binds.extend(binds);
+    pub fn expr(mut self, e: impl EvalExpr) -> Self {
+        self.0.push_eval(e);
         self
     }
 
@@ -752,11 +749,9 @@ impl<T: Table> Expr<T> {
     // -- CASE WHEN -----------------------------------------------------------
 
     /// Begin a `CASE WHEN condition …` block. Must chain `.then_()` then `.else_()`.
-    pub fn if_(mut self, condition: Expr<T>) -> ExprIf<T> {
-        let (cond_sql, cond_binds) = condition.0.eval().unwrap();
+    pub fn if_(mut self, condition: impl EvalExpr) -> ExprIf<T> {
         self.0.push("CASE WHEN ");
-        self.0.push(&cond_sql);
-        self.0.binds.extend(cond_binds);
+        self.0.push_eval(condition);
         ExprIf(self.0)
     }
 
