@@ -41,7 +41,7 @@ impl SqlUpdate {
 
     /// Add `SET col = val` clauses. Pass `Col::Name.eq(val)` expressions,
     /// or use `Expr::new().column(col).eq().now()` for computed values.
-    pub fn set<T: Table>(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn set<E: EvalExpr>(mut self, exprs: impl IntoIterator<Item = E>) -> Self {
         self.set_clauses.extend(exprs.into_iter().map(|x| x.eval()));
         self
     }
@@ -72,7 +72,7 @@ impl SqlUpdate {
     }
 
     /// Adds WHERE conditions that are ANDed together.
-    pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn filter<E: EvalExpr>(mut self, filters: impl IntoIterator<Item = E>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }

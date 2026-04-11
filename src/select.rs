@@ -151,13 +151,13 @@ impl SqlSelect {
     }
 
     /// Adds WHERE conditions that are ANDed together.
-    pub fn filter<T: Table>(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn filter<E: EvalExpr>(mut self, filters: impl IntoIterator<Item = E>) -> Self {
         self.filters.extend(filters.into_iter().map(|x| x.eval()));
         self
     }
 
     /// Adds HAVING conditions applied after GROUP BY.
-    pub fn having<T: Table>(mut self, conditions: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn having<E: EvalExpr>(mut self, conditions: impl IntoIterator<Item = E>) -> Self {
         self.having.extend(conditions.into_iter().map(|x| x.eval()));
         self
     }
