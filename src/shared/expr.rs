@@ -1289,7 +1289,7 @@ pub enum SqlOrder {
 }
 
 /// SQL join type for combining tables.
-#[derive(strum::AsRefStr)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, strum::AsRefStr)]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum SqlJoin {
     Inner,

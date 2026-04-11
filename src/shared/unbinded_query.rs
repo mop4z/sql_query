@@ -169,11 +169,14 @@ pub(crate) fn push_conditions(
     sql.push(' ');
     sql.push_str(keyword);
     sql.push_str(" 1=1");
+    // Each filter is wrapped in parens so internal OR operators can't bind
+    // tighter than the joining AND: `(a OR b) AND c`, not `a OR b AND c`.
     for result in conditions {
         let (filter, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
         binds.extend(params);
-        sql.push_str(" AND ");
+        sql.push_str(" AND (");
         sql.push_str(&filter);
+        sql.push(')');
     }
     Ok(())
 }

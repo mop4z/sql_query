@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn delete_with_filter() {
         let (sql, binds) = build(SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice")]));
-        assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND "users".name = $1"#);
+        assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1)"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -173,7 +173,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"DELETE FROM "users" WHERE 1=1 AND "users".name = $1 AND "users".age > $2"#,
+            r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1) AND ("users".age > $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(18)]);
     }
@@ -182,7 +182,7 @@ mod tests {
     fn delete_with_returning() {
         let (sql, _) =
             build(SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice")]).returning_all());
-        assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND "users".name = $1 RETURNING *"#,);
+        assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1) RETURNING *"#,);
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1) OR "users".name = $2"#,
+            r#"DELETE FROM "users" WHERE 1=1 AND (("users".name = $1) OR "users".name = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],);
     }
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn delete_with_is_null() {
         let (sql, binds) = build(SqlDelete::<Users>::new().filter([UsersCol::Name.is_null()]));
-        assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND "users".name IS NULL"#);
+        assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND ("users".name IS NULL)"#);
         assert!(binds.is_empty());
     }
 
@@ -217,7 +217,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"DELETE FROM "users" WHERE 1=1 AND "users".id IN (SELECT "users".id FROM "users" WHERE 1=1 AND "users".name = $1)"#,
+            r#"DELETE FROM "users" WHERE 1=1 AND ("users".id IN (SELECT "users".id FROM "users" WHERE 1=1 AND ("users".name = $1)))"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }

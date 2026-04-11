@@ -194,7 +194,7 @@ mod tests {
         let (sql, binds) = build(q1.union(q2));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1 UNION SELECT * FROM "users" WHERE 1=1 AND "users".name = $2"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) UNION SELECT * FROM "users" WHERE 1=1 AND ("users".name = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())]);
     }
@@ -231,7 +231,7 @@ mod tests {
         let (sql, binds) = build(q1.union(q2));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1 UNION SELECT * FROM "users" WHERE 1=1 AND "users".name = $2 AND "users".age > $3"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) UNION SELECT * FROM "users" WHERE 1=1 AND ("users".name = $2) AND ("users".age > $3)"#,
         );
         assert_eq!(
             binds,
@@ -251,7 +251,7 @@ mod tests {
         let (sql, binds) = build(q1.union(q2).union(q3));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1 UNION SELECT * FROM "users" WHERE 1=1 AND "users".name = $2 UNION SELECT * FROM "users" WHERE 1=1 AND "users".name = $3"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) UNION SELECT * FROM "users" WHERE 1=1 AND ("users".name = $2) UNION SELECT * FROM "users" WHERE 1=1 AND ("users".name = $3)"#,
         );
         assert_eq!(
             binds,
@@ -275,7 +275,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1 UNION SELECT * FROM "users" WHERE 1=1 AND "users".name = $2 ORDER BY name ASC LIMIT $3 OFFSET $4"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) UNION SELECT * FROM "users" WHERE 1=1 AND ("users".name = $2) ORDER BY name ASC LIMIT $3 OFFSET $4"#,
         );
         assert_eq!(
             binds,

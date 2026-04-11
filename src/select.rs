@@ -94,7 +94,9 @@ impl SqlSelect {
         self
     }
 
-    /// Adds a `{join} JOIN LATERAL (subquery) alias ON TRUE` clause.
+    /// Adds a `{join} JOIN LATERAL (subquery) alias` clause. For non-CROSS
+    /// join types the clause is followed by ` ON TRUE`; CROSS JOIN LATERAL
+    /// takes no ON clause.
     pub fn join_lateral(mut self, sql_join: SqlJoin, alias: &str, subquery: impl SqlBase) -> Self {
         let uq = subquery.build().expect("join_lateral build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
@@ -104,7 +106,9 @@ impl SqlSelect {
         s.push_str(&sub_sql);
         s.push_str(") ");
         s.push_str(alias);
-        s.push_str(" ON TRUE");
+        if sql_join != SqlJoin::Cross {
+            s.push_str(" ON TRUE");
+        }
         self.joined_tables.push(s);
         self.join_binds.extend(sub_binds);
         self
@@ -350,7 +354,7 @@ mod tests {
     #[test]
     fn select_with_single_filter() {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1)"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -361,7 +365,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1 AND "users".age = $2"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) AND ("users".age = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
     }
@@ -369,7 +373,7 @@ mod tests {
     #[test]
     fn select_filter_is_null() {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([UsersCol::Name.is_null()]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name IS NULL"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name IS NULL)"#);
         assert!(binds.is_empty());
     }
 
@@ -457,7 +461,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" CROSS JOIN LATERAL (SELECT "posts".title FROM "posts" WHERE 1=1 AND "posts".user_id = $1 LIMIT $2) lat ON TRUE WHERE 1=1 AND "users".name = $3"#,
+            r#"SELECT * FROM "users" CROSS JOIN LATERAL (SELECT "posts".title FROM "posts" WHERE 1=1 AND ("posts".user_id = $1) LIMIT $2) lat WHERE 1=1 AND ("users".name = $3)"#,
         );
         assert_eq!(
             binds,
@@ -501,7 +505,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = $1 AND "users".age = $2 LIMIT $3 OFFSET $4"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) AND ("users".age = $2) LIMIT $3 OFFSET $4"#,
         );
         assert_eq!(
             binds,
@@ -527,7 +531,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT DISTINCT "users".name, "users".age FROM "users" WHERE 1=1 AND "users".age = $1 ORDER BY "users".name ASC NULLS LAST LIMIT $2 OFFSET $3"#,
+            r#"SELECT DISTINCT "users".name, "users".age FROM "users" WHERE 1=1 AND ("users".age = $1) ORDER BY "users".name ASC NULLS LAST LIMIT $2 OFFSET $3"#,
         );
         assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I64(50), SqlParam::I64(10)],);
     }
@@ -538,7 +542,7 @@ mod tests {
             SqlSelect::new::<Users>()
                 .filter([UExpr::new().column(UsersCol::Name).eq(UExpr::new().now())]),
         );
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = NOW()"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = NOW())"#);
         assert!(binds.is_empty());
     }
 
@@ -548,7 +552,7 @@ mod tests {
             SqlSelect::new::<Users>()
                 .filter([UExpr::new().column(UsersCol::Name).eq(UExpr::new().raw("TRUE"))]),
         );
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = TRUE"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = TRUE)"#);
         assert!(binds.is_empty());
     }
 
@@ -560,7 +564,7 @@ mod tests {
                 .eq(SqlParam::String("alice".into()))
                 .wrap_raw("LOWER")]),
         );
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND LOWER("users".name = $1)"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND (LOWER("users".name = $1))"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -577,7 +581,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT "users".age, COUNT("users".id) AS count FROM "users" GROUP BY "users".age HAVING 1=1 AND COUNT("users".id) = $1"#,
+            r#"SELECT "users".age, COUNT("users".id) AS count FROM "users" GROUP BY "users".age HAVING 1=1 AND (COUNT("users".id) = $1)"#,
         );
         assert_eq!(binds, vec![SqlParam::I32(5)]);
     }
@@ -596,7 +600,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT "users".age, COUNT("users".id) AS count FROM "users" WHERE 1=1 AND "users".name = $1 GROUP BY "users".age HAVING 1=1 AND COUNT("users".id) = $2"#,
+            r#"SELECT "users".age, COUNT("users".id) AS count FROM "users" WHERE 1=1 AND ("users".name = $1) GROUP BY "users".age HAVING 1=1 AND (COUNT("users".id) = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(3)]);
     }
@@ -615,7 +619,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT COUNT("users".id) FILTER (WHERE "users".age > $1) AS adult_count FROM "users" WHERE 1=1 AND "users".name = $2"#,
+            r#"SELECT COUNT("users".id) FILTER (WHERE "users".age > $1) AS adult_count FROM "users" WHERE 1=1 AND ("users".name = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::String("alice".into())]);
     }
@@ -632,7 +636,7 @@ mod tests {
         ]));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".id IN (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND "posts".title = $1) AND "users".name = $2"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".id IN (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND ("posts".title = $1))) AND ("users".name = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("hello".into()), SqlParam::String("alice".into())],);
     }
@@ -646,7 +650,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND "users".id IN (SELECT "posts".user_id FROM "posts")"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".id IN (SELECT "posts".user_id FROM "posts"))"#,
         );
         assert!(binds.is_empty());
     }
@@ -654,47 +658,47 @@ mod tests {
     #[test]
     fn filter_gt() {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.gt(18i32)]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age > $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".age > $1)"#);
         assert_eq!(binds, vec![SqlParam::I32(18)]);
     }
 
     #[test]
     fn filter_gte() {
         let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.gte(18i32)]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age >= $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".age >= $1)"#);
     }
 
     #[test]
     fn filter_lt() {
         let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.lt(65i32)]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age < $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".age < $1)"#);
     }
 
     #[test]
     fn filter_lte() {
         let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Age.lte(65i32)]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age <= $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".age <= $1)"#);
     }
 
     #[test]
     fn filter_like() {
         let (sql, binds) =
             build(SqlSelect::new::<Users>().filter([UsersCol::Name.like("%alice%")]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name LIKE $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name LIKE $1)"#);
         assert_eq!(binds, vec![SqlParam::String("%alice%".into())]);
     }
 
     #[test]
     fn filter_ilike() {
         let (sql, _) = build(SqlSelect::new::<Users>().filter([UsersCol::Name.ilike("%alice%")]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name ILIKE $1"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name ILIKE $1)"#);
     }
 
     #[test]
     fn filter_between() {
         let (sql, binds) =
             build(SqlSelect::new::<Users>().filter([UsersCol::Age.between(18i32, 65i32)]));
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".age BETWEEN $1 AND $2"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".age BETWEEN $1 AND $2)"#);
         assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I32(65)]);
     }
 
@@ -705,7 +709,7 @@ mod tests {
         let (sql, binds) = build(SqlSelect::new::<Users>().filter([UExpr::new().exists(sub)]));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND EXISTS (SELECT * FROM "posts" WHERE 1=1 AND "posts".title = $1)"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND (EXISTS (SELECT * FROM "posts" WHERE 1=1 AND ("posts".title = $1)))"#,
         );
         assert_eq!(binds, vec![SqlParam::String("hello".into())]);
     }
@@ -717,7 +721,7 @@ mod tests {
         let (sql, _) = build(SqlSelect::new::<Users>().filter([UExpr::new().not_exists(sub)]));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND NOT EXISTS (SELECT * FROM "posts" WHERE 1=1 AND "posts".title = $1)"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND (NOT EXISTS (SELECT * FROM "posts" WHERE 1=1 AND ("posts".title = $1)))"#,
         );
     }
 
@@ -727,7 +731,7 @@ mod tests {
             SqlSelect::new::<Users>()
                 .filter([UsersCol::Name.any(SqlParam::String("alice".into()))]),
         );
-        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND "users".name = ANY($1)"#);
+        assert_eq!(sql, r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = ANY($1))"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
@@ -765,7 +769,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) OR "users".name = $2"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND (("users".name = $1) OR "users".name = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],);
     }
@@ -778,7 +782,7 @@ mod tests {
         ]));
         assert_eq!(
             sql,
-            r#"SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1) OR "users".name = $2 AND "users".age >= $3"#,
+            r#"SELECT * FROM "users" WHERE 1=1 AND (("users".name = $1) OR "users".name = $2) AND ("users".age >= $3)"#,
         );
         assert_eq!(
             binds,
@@ -801,7 +805,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"WITH active_users AS (SELECT * FROM "users" WHERE 1=1 AND "users".age = $1) SELECT * FROM "users""#,
+            r#"WITH active_users AS (SELECT * FROM "users" WHERE 1=1 AND ("users".age = $1)) SELECT * FROM "users""#,
         );
         assert_eq!(binds, vec![SqlParam::I32(18)]);
     }
@@ -817,7 +821,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"WITH young AS (SELECT * FROM "users" WHERE 1=1 AND "users".age = $1), old AS (SELECT * FROM "users" WHERE 1=1 AND "users".age = $2) SELECT * FROM "users""#,
+            r#"WITH young AS (SELECT * FROM "users" WHERE 1=1 AND ("users".age = $1)), old AS (SELECT * FROM "users" WHERE 1=1 AND ("users".age = $2)) SELECT * FROM "users""#,
         );
         assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::I32(65)]);
     }
@@ -834,7 +838,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"WITH active AS (SELECT * FROM "users" WHERE 1=1 AND "users".name = $1) SELECT * FROM "users" WHERE 1=1 AND "users".age = $2"#,
+            r#"WITH active AS (SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1)) SELECT * FROM "users" WHERE 1=1 AND ("users".age = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
     }

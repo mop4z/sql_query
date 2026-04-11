@@ -492,7 +492,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" WHERE 1=1 AND "users".age > $1"#,
+            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" WHERE 1=1 AND ("users".age > $1)"#,
         );
         assert_eq!(binds, vec![SqlParam::I32(18)]);
     }
@@ -510,7 +510,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" WHERE 1=1 AND "users".age > $1 ON CONFLICT DO NOTHING"#,
+            r#"INSERT INTO "users" (name, age) SELECT "users".name, "users".age FROM "users" WHERE 1=1 AND ("users".age > $1) ON CONFLICT DO NOTHING"#,
         );
     }
 

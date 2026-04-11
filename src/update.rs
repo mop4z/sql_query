@@ -229,7 +229,7 @@ mod tests {
                 .set([UsersCol::Name.eq("bob")])
                 .filter([UsersCol::Id.eq(1i32)]),
         );
-        assert_eq!(sql, r#"UPDATE "users" SET name = $1 WHERE 1=1 AND "users".id = $2"#,);
+        assert_eq!(sql, r#"UPDATE "users" SET name = $1 WHERE 1=1 AND ("users".id = $2)"#,);
         assert_eq!(binds, vec![SqlParam::String("bob".into()), SqlParam::I32(1)]);
     }
 
@@ -243,7 +243,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET name = $1 WHERE 1=1 AND "users".id = $2 RETURNING *"#,
+            r#"UPDATE "users" SET name = $1 WHERE 1=1 AND ("users".id = $2) RETURNING *"#,
         );
         assert_eq!(binds, vec![SqlParam::String("bob".into()), SqlParam::I32(1)]);
     }
@@ -267,7 +267,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET name = $1, age = $2 WHERE 1=1 AND "users".name = $3 AND "users".age > $4"#,
+            r#"UPDATE "users" SET name = $1, age = $2 WHERE 1=1 AND ("users".name = $3) AND ("users".age > $4)"#,
         );
         assert_eq!(
             binds,
@@ -289,7 +289,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET age = $1 WHERE 1=1 AND ("users".name = $2) OR "users".name = $3"#,
+            r#"UPDATE "users" SET age = $1 WHERE 1=1 AND (("users".name = $2) OR "users".name = $3)"#,
         );
         assert_eq!(
             binds,
@@ -311,7 +311,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET name = $1 FROM "posts" WHERE 1=1 AND "users".id = $2"#,
+            r#"UPDATE "users" SET name = $1 FROM "posts" WHERE 1=1 AND ("users".id = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("updated".into()), SqlParam::I32(1)]);
     }
@@ -327,7 +327,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET name = $1 FROM "posts" WHERE 1=1 AND "users".id = $2 AND "posts".title = $3"#,
+            r#"UPDATE "users" SET name = $1 FROM "posts" WHERE 1=1 AND ("users".id = $2) AND ("posts".title = $3)"#,
         );
         assert_eq!(
             binds,
@@ -373,7 +373,7 @@ mod tests {
         );
         assert_eq!(
             sql,
-            r#"UPDATE "users" SET name = $1 FROM (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND "posts".title = $2) sub WHERE 1=1 AND "users".id = sub.user_id"#,
+            r#"UPDATE "users" SET name = $1 FROM (SELECT "posts".user_id FROM "posts" WHERE 1=1 AND ("posts".title = $2)) sub WHERE 1=1 AND ("users".id = sub.user_id)"#,
         );
         assert_eq!(
             binds,
