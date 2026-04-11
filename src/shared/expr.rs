@@ -140,6 +140,13 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// Reinterpret this expression as bound to table `U`. The SQL and binds are
+    /// preserved verbatim — only the phantom table changes. Lets an expression
+    /// built against one table be spliced into a query against another.
+    pub fn coerce<U: Table>(self) -> Expr<U> {
+        Expr(ExprBuf { buf: self.0.buf, binds: self.0.binds, _t: PhantomData })
+    }
+
     // -- values / literals ---------------------------------------------------
 
     /// Append a value or expression. Scalars become `$#` with a bind parameter;
@@ -1075,6 +1082,12 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
     /// Start an `Expr<T>` from this column for further chaining.
     fn col(self) -> Expr<T> {
         Expr::new().column(self)
+    }
+
+    /// Qualified column reference reinterpreted as an `Expr<U>`. Lets a foreign
+    /// column be spliced into a query built against another table.
+    fn coerce<U: Table>(self) -> Expr<U> {
+        self.col().coerce::<U>()
     }
 }
 

@@ -296,6 +296,10 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
             pub fn col(self) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::col(self)
             }
+
+            pub fn coerce<U: ::sql_query::Table>(self) -> ::sql_query::Expr<U> {
+                <Self as ::sql_query::ColOps<#struct_name>>::coerce::<U>(self)
+            }
         }
     };
 
