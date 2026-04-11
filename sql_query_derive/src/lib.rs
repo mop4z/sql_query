@@ -201,11 +201,11 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::date(self)
             }
 
-            pub fn json_get(self, key: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+            pub fn json_get(self, key: &str) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::json_get(self, key)
             }
 
-            pub fn json_get_text(self, key: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+            pub fn json_get_text(self, key: &str) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::json_get_text(self, key)
             }
 
@@ -217,15 +217,15 @@ pub fn derive_sql_cols(input: TokenStream) -> TokenStream {
                 ::sql_query::ColOps::any(self, val)
             }
 
-            pub fn jsonb_text_eq(self, key: impl ::sql_query::EvalExpr, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+            pub fn jsonb_text_eq(self, key: &str, val: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::jsonb_text_eq(self, key, val)
             }
 
-            pub fn json_path(self, path: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+            pub fn json_path(self, path: &str) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::json_path(self, path)
             }
 
-            pub fn json_path_text(self, path: impl ::sql_query::EvalExpr) -> ::sql_query::Expr<#struct_name> {
+            pub fn json_path_text(self, path: &str) -> ::sql_query::Expr<#struct_name> {
                 ::sql_query::ColOps::json_path_text(self, path)
             }
 

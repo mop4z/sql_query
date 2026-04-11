@@ -46,6 +46,20 @@ impl<T: Table> ExprBuf<T> {
         self.buf.push_str(s);
     }
 
+    /// Append a single-quoted SQL string literal, escaping embedded quotes.
+    /// Used for structurally-constant strings (JSON keys, type names) that
+    /// shouldn't become bind parameters.
+    fn push_quoted_literal(&mut self, s: &str) {
+        self.buf.push('\'');
+        for ch in s.chars() {
+            if ch == '\'' {
+                self.buf.push('\'');
+            }
+            self.buf.push(ch);
+        }
+        self.buf.push('\'');
+    }
+
     fn push_col(&mut self, col: T::Col) {
         self.push_col_of::<T>(col);
     }
@@ -516,40 +530,46 @@ impl<T: Table> Expr<T> {
 
     // -- json ----------------------------------------------------------------
 
-    /// Append ` -> key` — JSON field access, returns JSON.
-    pub fn json_get(mut self, key: impl EvalExpr) -> Self {
+    /// Append ` -> 'key'` — JSON field access, returns JSON. The key is
+    /// emitted as a single-quoted SQL literal (not a bind parameter), so two
+    /// calls with the same key produce identical SQL — necessary for GROUP BY
+    /// equality and expression-index matching.
+    pub fn json_get(mut self, key: &str) -> Self {
         self.0.push(" -> ");
-        self.0.push_eval(key);
+        self.0.push_quoted_literal(key);
         self
     }
 
-    /// Append ` ->> key` — JSON field access, returns text.
-    pub fn json_get_text(mut self, key: impl EvalExpr) -> Self {
+    /// Append ` ->> 'key'` — JSON field access, returns text. See `json_get`
+    /// for why the key is inlined instead of parameterised.
+    pub fn json_get_text(mut self, key: &str) -> Self {
         self.0.push(" ->> ");
-        self.0.push_eval(key);
+        self.0.push_quoted_literal(key);
         self
     }
 
-    /// Shorthand for `col ->> key = val` — JSONB text field equality.
-    pub fn jsonb_text_eq(mut self, key: impl EvalExpr, val: impl EvalExpr) -> Self {
+    /// Shorthand for `col ->> 'key' = val` — JSONB text field equality. The
+    /// key is inlined; `val` is still parameterised.
+    pub fn jsonb_text_eq(mut self, key: &str, val: impl EvalExpr) -> Self {
         self.0.push(" ->> ");
-        self.0.push_eval(key);
+        self.0.push_quoted_literal(key);
         self.0.push(" = ");
         self.0.push_eval(val);
         self
     }
 
-    /// Append ` #> path` — JSON path access, returns JSON.
-    pub fn json_path(mut self, path: impl EvalExpr) -> Self {
+    /// Append ` #> '{a,b}'` — JSON path access, returns JSON. The path is
+    /// inlined as a single-quoted literal.
+    pub fn json_path(mut self, path: &str) -> Self {
         self.0.push(" #> ");
-        self.0.push_eval(path);
+        self.0.push_quoted_literal(path);
         self
     }
 
-    /// Append ` #>> path` — JSON path access, returns text.
-    pub fn json_path_text(mut self, path: impl EvalExpr) -> Self {
+    /// Append ` #>> '{a,b}'` — JSON path access, returns text.
+    pub fn json_path_text(mut self, path: &str) -> Self {
         self.0.push(" #>> ");
-        self.0.push_eval(path);
+        self.0.push_quoted_literal(path);
         self
     }
 
@@ -983,13 +1003,13 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
         Expr::new().column(self).date()
     }
 
-    /// `"table".col -> key` — JSON field access, returns JSON.
-    fn json_get(self, key: impl EvalExpr) -> Expr<T> {
+    /// `"table".col -> 'key'` — JSON field access, returns JSON.
+    fn json_get(self, key: &str) -> Expr<T> {
         Expr::new().column(self).json_get(key)
     }
 
-    /// `"table".col ->> key` — JSON field access, returns text.
-    fn json_get_text(self, key: impl EvalExpr) -> Expr<T> {
+    /// `"table".col ->> 'key'` — JSON field access, returns text.
+    fn json_get_text(self, key: &str) -> Expr<T> {
         Expr::new().column(self).json_get_text(key)
     }
 
@@ -1003,18 +1023,18 @@ pub trait ColOps<T: Table<Col = Self>>: AsRef<str> + Display + Copy {
         Expr::new().column(self).any(val)
     }
 
-    /// `"table".col ->> key = val` — JSONB text field equality.
-    fn jsonb_text_eq(self, key: impl EvalExpr, val: impl EvalExpr) -> Expr<T> {
+    /// `"table".col ->> 'key' = val` — JSONB text field equality.
+    fn jsonb_text_eq(self, key: &str, val: impl EvalExpr) -> Expr<T> {
         Expr::new().column(self).jsonb_text_eq(key, val)
     }
 
-    /// `"table".col #> path` — JSON path access, returns JSON.
-    fn json_path(self, path: impl EvalExpr) -> Expr<T> {
+    /// `"table".col #> '{a,b}'` — JSON path access, returns JSON.
+    fn json_path(self, path: &str) -> Expr<T> {
         Expr::new().column(self).json_path(path)
     }
 
-    /// `"table".col #>> path` — JSON path access, returns text.
-    fn json_path_text(self, path: impl EvalExpr) -> Expr<T> {
+    /// `"table".col #>> '{a,b}'` — JSON path access, returns text.
+    fn json_path_text(self, path: &str) -> Expr<T> {
         Expr::new().column(self).json_path_text(path)
     }
 

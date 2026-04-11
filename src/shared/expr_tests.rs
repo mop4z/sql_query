@@ -310,14 +310,22 @@ fn if_then_else_with_column() {
 
 #[test]
 fn json_get_key() {
-    let (sql, _) = eval(E::new().column(TC::Data).json_get("key"));
-    assert_eq!(sql, r#""test_table".data -> $#"#);
+    let (sql, binds) = eval(E::new().column(TC::Data).json_get("key"));
+    assert_eq!(sql, r#""test_table".data -> 'key'"#);
+    assert!(binds.is_empty());
 }
 
 #[test]
 fn json_get_text_key() {
-    let (sql, _) = eval(E::new().column(TC::Data).json_get_text("key"));
-    assert_eq!(sql, r#""test_table".data ->> $#"#);
+    let (sql, binds) = eval(E::new().column(TC::Data).json_get_text("key"));
+    assert_eq!(sql, r#""test_table".data ->> 'key'"#);
+    assert!(binds.is_empty());
+}
+
+#[test]
+fn json_get_text_escapes_single_quote() {
+    let (sql, _) = eval(E::new().column(TC::Data).json_get_text("k'ey"));
+    assert_eq!(sql, r#""test_table".data ->> 'k''ey'"#);
 }
 
 // -- ANY / ALL -----------------------------------------------------------
@@ -340,20 +348,20 @@ fn all_val() {
 #[test]
 fn jsonb_text_eq() {
     let (sql, binds) = eval(E::new().column(TC::Data).jsonb_text_eq("key", "val"));
-    assert_eq!(sql, r#""test_table".data ->> $# = $#"#);
-    assert_eq!(binds, vec![SqlParam::String("key".into()), SqlParam::String("val".into())]);
+    assert_eq!(sql, r#""test_table".data ->> 'key' = $#"#);
+    assert_eq!(binds, vec![SqlParam::String("val".into())]);
 }
 
 #[test]
 fn json_path() {
     let (sql, _) = eval(E::new().column(TC::Data).json_path("{a,b}"));
-    assert_eq!(sql, r#""test_table".data #> $#"#);
+    assert_eq!(sql, r#""test_table".data #> '{a,b}'"#);
 }
 
 #[test]
 fn json_path_text() {
     let (sql, _) = eval(E::new().column(TC::Data).json_path_text("{a,b}"));
-    assert_eq!(sql, r#""test_table".data #>> $#"#);
+    assert_eq!(sql, r#""test_table".data #>> '{a,b}'"#);
 }
 
 // -- COALESCE ------------------------------------------------------------
