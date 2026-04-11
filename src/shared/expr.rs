@@ -175,6 +175,17 @@ impl<T: Table> Expr<T> {
         Self::new().raw("*")
     }
 
+    /// Start an expression with `"T".*` — the qualified all-columns form. Use
+    /// when a JOIN pulls in columns from multiple tables and you want only
+    /// the target table's columns: `SELECT "users".* FROM "users" JOIN ...`.
+    pub fn t_star() -> Self {
+        let mut e = Self::new();
+        e.0.buf.push('"');
+        e.0.buf.push_str(T::TABLE_NAME);
+        e.0.buf.push_str("\".*");
+        e
+    }
+
     /// Append `NOW()` — the current timestamp.
     pub fn now(mut self) -> Self {
         self.0.push("NOW()");

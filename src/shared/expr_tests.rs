@@ -610,6 +610,13 @@ fn first_value_with_frame() {
 }
 
 #[test]
+fn t_star_qualifies_with_table_name() {
+    let (sql, binds) = eval(E::t_star());
+    assert_eq!(sql, r#""test_table".*"#);
+    assert!(binds.is_empty());
+}
+
+#[test]
 fn filter_and_over() {
     let (sql, binds) = eval(
         E::star()
