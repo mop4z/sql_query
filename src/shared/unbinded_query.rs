@@ -8,6 +8,14 @@ use sqlx::{
 
 use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
 
+/// Emits a tracing event for a query about to hit Postgres. SQL and bind
+/// count go to debug; full bind values go to trace.
+#[inline]
+fn trace_sql(sql: &str, binds: &[SqlParam]) {
+    tracing::debug!(target: "sql_query", sql = %sql, binds = binds.len(), "executing query");
+    tracing::trace!(target: "sql_query", binds = ?binds, "bind values");
+}
+
 /// A query whose placeholders have not yet been renumbered or bound.
 pub struct UnbindedQuery {
     pub(crate) sql: String,
@@ -59,6 +67,7 @@ async fn run_query_as<'e, T: for<'r> FromRow<'r, PgRow> + Send + Unpin>(
     binds: Vec<SqlParam>,
     executor: impl Executor<'e, Database = Postgres>,
 ) -> Result<Vec<T>, sqlx::Error> {
+    trace_sql(sql, &binds);
     let mut q = sqlx::query_as::<_, T>(sql);
     for b in binds {
         q = q.bind(b);
@@ -71,6 +80,7 @@ async fn run_query_as_one<'e, T: for<'r> FromRow<'r, PgRow> + Send + Unpin>(
     binds: Vec<SqlParam>,
     executor: impl Executor<'e, Database = Postgres>,
 ) -> Result<T, sqlx::Error> {
+    trace_sql(sql, &binds);
     let mut q = sqlx::query_as::<_, T>(sql);
     for b in binds {
         q = q.bind(b);
@@ -83,6 +93,7 @@ async fn run_query_as_optional<'e, T: for<'r> FromRow<'r, PgRow> + Send + Unpin>
     binds: Vec<SqlParam>,
     executor: impl Executor<'e, Database = Postgres>,
 ) -> Result<Option<T>, sqlx::Error> {
+    trace_sql(sql, &binds);
     let mut q = sqlx::query_as::<_, T>(sql);
     for b in binds {
         q = q.bind(b);
@@ -99,6 +110,7 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin,
 {
+    trace_sql(sql, &binds);
     let mut q = sqlx::query_scalar::<_, T>(sql);
     for b in binds {
         q = q.bind(b);
@@ -115,6 +127,7 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin,
 {
+    trace_sql(sql, &binds);
     let mut q = sqlx::query_scalar::<_, T>(sql);
     for b in binds {
         q = q.bind(b);
@@ -131,6 +144,7 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin,
 {
+    trace_sql(sql, &binds);
     let mut q = sqlx::query_scalar::<_, T>(sql);
     for b in binds {
         q = q.bind(b);
@@ -215,6 +229,7 @@ impl BoundQuery {
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<PgQueryResult, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
@@ -226,6 +241,7 @@ impl BoundQuery {
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<Vec<PgRow>, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
@@ -237,6 +253,7 @@ impl BoundQuery {
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<PgRow, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
@@ -248,6 +265,7 @@ impl BoundQuery {
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<Option<PgRow>, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
@@ -293,6 +311,7 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         self,
         executor: impl Executor<'e, Database = Postgres>,
     ) -> Result<PgQueryResult, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
         let mut q = sqlx::query(&self.sql);
         for b in self.binds {
             q = q.bind(b);
@@ -302,6 +321,7 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
 
     pub async fn fetch_paginated(self, pool: &PgPool) -> Result<(Vec<T>, i64), sqlx::Error> {
         let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _sq", self.sql);
+        trace_sql(&count_sql, &self.binds);
         let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
         for b in &self.binds {
             count_q = count_q.bind(b.clone());

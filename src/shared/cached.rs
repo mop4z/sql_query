@@ -31,10 +31,12 @@ where
 {
     if let Ok(Some(hit)) = redis.get::<&str, Option<String>>(key).await {
         if let Ok(val) = serde_json::from_str(&hit) {
+            tracing::debug!(target: "sql_query", key = %key, "cache hit");
             return Ok(val);
         }
     }
 
+    tracing::debug!(target: "sql_query", key = %key, ttl, "cache miss, fetching");
     let result = fetch().await?;
 
     if let Ok(json) = serde_json::to_string(&result) {
