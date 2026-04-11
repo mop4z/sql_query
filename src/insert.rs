@@ -18,6 +18,7 @@ pub struct SqlInsert<T: Table> {
     on_conflict: Option<SqlConflict<T::Col>>,
     returning: Returning,
     ctes: Vec<Cte>,
+    include_nulls: bool,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -34,6 +35,7 @@ impl<T: Table> SqlInsert<T> {
             on_conflict: None,
             returning: Returning::None,
             ctes,
+            include_nulls: false,
             _t: std::marker::PhantomData,
         }
     }
@@ -140,10 +142,23 @@ impl<T: Table> SqlInsert<T> {
         self.returning = Returning::None;
         self
     }
+
+    /// Forces column-value pairs with NULL values to be included (normally
+    /// skipped). Null-only columns are dropped by default because `SqlParam::Null`
+    /// encodes as `void`, which Postgres refuses to coerce into enum or other
+    /// non-inferrable column types.
+    pub fn include_nulls(mut self) -> Self {
+        self.include_nulls = true;
+        self
+    }
 }
 
 impl<T: Table> SqlBase for SqlInsert<T> {
-    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+    fn build(mut self) -> Result<UnbindedQuery, sqlx::Error> {
+        if !self.include_nulls && self.select_source.is_none() && !self.rows.is_empty() {
+            drop_null_only_columns(&mut self.columns, &mut self.rows);
+        }
+
         let mut sql = String::with_capacity(128);
         sql.push_str("INSERT INTO \"");
         sql.push_str(T::TABLE_NAME);
@@ -205,6 +220,46 @@ impl<T: Table> SqlBase for SqlInsert<T> {
 
         push_returning(self.returning, &mut sql);
         Ok(UnbindedQuery { sql, binds })
+    }
+}
+
+fn drop_null_only_columns(
+    columns: &mut Vec<String>,
+    rows: &mut Vec<Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>>,
+) {
+    let mut keep = vec![false; columns.len()];
+    for row in rows.iter() {
+        for (i, cell) in row.iter().enumerate() {
+            if keep.get(i).copied().unwrap_or(true) {
+                continue;
+            }
+            let has_value = match cell {
+                Ok((_, binds)) => {
+                    binds.is_empty() || binds.iter().any(|b| !matches!(b, SqlParam::Null))
+                }
+                Err(_) => true,
+            };
+            if has_value {
+                keep[i] = true;
+            }
+        }
+    }
+    if keep.iter().all(|k| *k) {
+        return;
+    }
+    let mut idx = 0;
+    columns.retain(|_| {
+        let k = keep[idx];
+        idx += 1;
+        k
+    });
+    for row in rows.iter_mut() {
+        let mut idx = 0;
+        row.retain(|_| {
+            let k = keep[idx];
+            idx += 1;
+            k
+        });
     }
 }
 
@@ -352,6 +407,59 @@ mod tests {
             r#"INSERT INTO "users" (name, age) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET age = EXCLUDED.age RETURNING *"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
+    }
+
+    #[test]
+    fn insert_skips_null_only_columns_by_default() {
+        let (sql, binds) = build(
+            SqlInsert::<Users>::new()
+                .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
+                .unwrap(),
+        );
+        assert_eq!(sql, r#"INSERT INTO "users" (name) VALUES ($1)"#);
+        assert_eq!(binds, vec![SqlParam::String("alice".into())]);
+    }
+
+    #[test]
+    fn insert_include_nulls() {
+        let (sql, binds) = build(
+            SqlInsert::<Users>::new()
+                .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
+                .unwrap()
+                .include_nulls(),
+        );
+        assert_eq!(sql, r#"INSERT INTO "users" (name, age) VALUES ($1, $2)"#);
+        assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::Null]);
+    }
+
+    #[test]
+    fn insert_nested_drops_null_only_columns() {
+        let (sql, binds) = build(
+            SqlInsert::<Users>::new()
+                .values_nested([
+                    vec![UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)],
+                    vec![UsersCol::Name.eq("bob"), UsersCol::Age.eq(SqlParam::Null)],
+                ])
+                .unwrap(),
+        );
+        assert_eq!(sql, r#"INSERT INTO "users" (name) VALUES ($1), ($2)"#);
+        assert_eq!(
+            binds,
+            vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],
+        );
+    }
+
+    #[test]
+    fn insert_nested_keeps_column_if_any_row_has_value() {
+        let (sql, _) = build(
+            SqlInsert::<Users>::new()
+                .values_nested([
+                    vec![UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)],
+                    vec![UsersCol::Name.eq("bob"), UsersCol::Age.eq(30i32)],
+                ])
+                .unwrap(),
+        );
+        assert_eq!(sql, r#"INSERT INTO "users" (name, age) VALUES ($1, $2), ($3, $4)"#);
     }
 
     #[test]

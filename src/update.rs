@@ -3,11 +3,13 @@ use crate::{
     shared::{
         Cte, Returning, Table, UnbindedQuery,
         error::SqlQueryError,
-        expr::{EvalExpr, Expr},
+        expr::EvalExpr,
         prepend_ctes, push_conditions, push_returning,
         value::SqlParam,
     },
 };
+#[cfg(test)]
+use crate::shared::expr::Expr;
 
 /// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.
 pub struct SqlUpdate {
