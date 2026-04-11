@@ -91,6 +91,11 @@ E::new().exists(sub)
 E::new().column(NC::Logo).eq(E::new().column_of::<Currency>(CC::Logo))
 // -> "network".logo = "currency".logo
 
+// Or as a one-shot shorthand via .coerce::<U>() — reinterprets the phantom
+// table so a foreign column can be spliced into the surrounding Expr<T>
+NC::Logo.eq(CC::Logo.coerce::<Network>())
+// -> "network".logo = "currency".logo
+
 // Raw SQL escape hatch
 E::new().column(UC::Name).eq(E::new().raw("UPPER('test')"))
 // -> "users".name = UPPER('test')
@@ -343,7 +348,7 @@ SqlQ::update::<Users>()
 // Cross-table column reference
 SqlQ::update::<Network>()
     .set([
-        NetworkCol::Logo.col().eq(E::new().column_of::<Currency>(CurrencyCol::Logo)),
+        NetworkCol::Logo.eq(CurrencyCol::Logo.coerce::<Network>()),
     ])
 ```
 
