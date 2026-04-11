@@ -14,12 +14,15 @@ use crate::{
 pub struct SqlSelect {
     table: &'static str,
     pub(super) columns: Vec<String>,
+    column_binds: Vec<SqlParam>,
     joined_tables: Vec<String>,
     join_binds: Vec<SqlParam>,
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     having: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     group_by: Vec<String>,
+    group_by_binds: Vec<SqlParam>,
     order_by: Vec<String>,
+    order_by_binds: Vec<SqlParam>,
     limit: Option<u64>,
     offset: Option<u64>,
     distinct: bool,
@@ -37,12 +40,15 @@ impl SqlSelect {
         Self {
             table: T::TABLE_NAME,
             columns: Vec::new(),
+            column_binds: Vec::new(),
             joined_tables: Vec::new(),
             join_binds: Vec::new(),
             filters: Vec::new(),
             having: Vec::new(),
             group_by: Vec::new(),
+            group_by_binds: Vec::new(),
             order_by: Vec::new(),
+            order_by_binds: Vec::new(),
             limit: None,
             offset: None,
             distinct: false,
@@ -58,7 +64,9 @@ impl SqlSelect {
     /// or `Expr::new().val(literal)` for computed columns.
     pub fn from(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
-            self.columns.push(c.eval().unwrap().0);
+            let (sql, binds) = c.eval().unwrap();
+            self.columns.push(sql);
+            self.column_binds.extend(binds);
         }
         self
     }
@@ -105,17 +113,20 @@ impl SqlSelect {
     /// Adds GROUP BY columns to the query.
     pub fn group_by(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
-            self.group_by.push(c.eval().unwrap().0);
+            let (sql, binds) = c.eval().unwrap();
+            self.group_by.push(sql);
+            self.group_by_binds.extend(binds);
         }
         self
     }
 
     /// Appends an ORDER BY clause for the given column and direction.
     pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
-        let mut s = column.eval().unwrap().0;
-        s.push(' ');
-        s.push_str(order.as_ref());
-        self.order_by.push(s);
+        let (mut sql, binds) = column.eval().unwrap();
+        sql.push(' ');
+        sql.push_str(order.as_ref());
+        self.order_by.push(sql);
+        self.order_by_binds.extend(binds);
         self
     }
 
@@ -214,13 +225,19 @@ impl SqlBase for SqlSelect {
             sql.push_str(join);
         }
 
-        let mut binds = self.join_binds;
+        // Bind order must match the final SQL's placeholder order:
+        // [CTE binds] SELECT [column binds] FROM t [join binds]
+        //   WHERE [filter binds] GROUP BY [group_by binds]
+        //   HAVING [having binds] ORDER BY [order_by binds] LIMIT [limit bind]
+        let mut binds = self.column_binds;
+        binds.extend(self.join_binds);
         prepend_ctes(self.ctes, &mut sql, &mut binds);
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
 
         if !self.group_by.is_empty() {
             sql.push_str(" GROUP BY ");
             sql.push_str(&self.group_by.join(", "));
+            binds.extend(self.group_by_binds);
         }
 
         push_conditions("HAVING", self.having, &mut sql, &mut binds)?;
@@ -228,6 +245,7 @@ impl SqlBase for SqlSelect {
         if !self.order_by.is_empty() {
             sql.push_str(" ORDER BY ");
             sql.push_str(&self.order_by.join(", "));
+            binds.extend(self.order_by_binds);
         }
 
         if let Some(limit) = self.limit {
@@ -581,6 +599,25 @@ mod tests {
             r#"SELECT "users".age, COUNT("users".id) AS count FROM "users" WHERE 1=1 AND "users".name = $1 GROUP BY "users".age HAVING 1=1 AND COUNT("users".id) = $2"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(3)]);
+    }
+
+    #[test]
+    fn select_column_with_filter_clause_binds_ordered_before_where() {
+        let (sql, binds) = build(
+            SqlSelect::new::<Users>()
+                .from([
+                    UsersCol::Id
+                        .count()
+                        .filter(UsersCol::Age.gt(SqlParam::I32(18)))
+                        .alias("adult_count"),
+                ])
+                .filter([UsersCol::Name.eq("alice")]),
+        );
+        assert_eq!(
+            sql,
+            r#"SELECT COUNT("users".id) FILTER (WHERE "users".age > $1) AS adult_count FROM "users" WHERE 1=1 AND "users".name = $2"#,
+        );
+        assert_eq!(binds, vec![SqlParam::I32(18), SqlParam::String("alice".into())]);
     }
 
     #[test]
