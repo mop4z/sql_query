@@ -10,11 +10,18 @@ use crate::{
     },
 };
 
+/// One column-value cell of an INSERT row, either an evaluated `(sql, binds)`
+/// fragment or a deferred `SqlQueryError` from a failed expression.
+type RowCell = Result<(String, Vec<SqlParam>), SqlQueryError>;
+
+/// One INSERT row: a vector of column cells.
+type Row = Vec<RowCell>;
+
 /// Builder for SQL INSERT statements with conflict handling and optional RETURNING clause.
 pub struct SqlInsert<T: Table> {
     columns: Vec<String>,
-    rows: Vec<Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>>,
-    select_source: Option<(String, Vec<SqlParam>)>,
+    rows: Vec<Row>,
+    select_source: Option<(String, Vec<SqlParam>, Vec<&'static str>)>,
     on_conflict: Option<SqlConflict<T::Col>>,
     returning: Returning,
     ctes: Vec<Cte>,
@@ -23,11 +30,11 @@ pub struct SqlInsert<T: Table> {
 }
 
 impl<T: Table> SqlInsert<T> {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self::new_with(vec![])
     }
 
-    pub(super) fn new_with(ctes: Vec<Cte>) -> Self {
+    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self {
         Self {
             columns: Vec::new(),
             rows: Vec::new(),
@@ -40,7 +47,7 @@ impl<T: Table> SqlInsert<T> {
         }
     }
 
-    fn has_source(&self) -> bool {
+    const fn has_source(&self) -> bool {
         !self.columns.is_empty() || !self.rows.is_empty() || self.select_source.is_some()
     }
 
@@ -88,6 +95,10 @@ impl<T: Table> SqlInsert<T> {
     /// `columns` lists the target column names; `select` provides the rows.
     /// Column order must match between the INSERT column list and the SELECT output.
     /// Mutually exclusive with `.values()` and `.values_nested()`.
+    ///
+    /// # Errors
+    /// Returns `SqlQueryError::InsertSourceAlreadySet` if a value source has already been set.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_select(
         mut self,
         columns: impl IntoIterator<Item = T::Col>,
@@ -98,14 +109,12 @@ impl<T: Table> SqlInsert<T> {
         }
         self.columns = columns.into_iter().map(|c| c.as_ref().to_string()).collect();
         let uq = SqlBase::build(select).expect("select build failed");
-        let (sql, binds) = uq.into_raw();
-        self.select_source = Some((sql, binds));
+        let (sql, binds, tables) = uq.into_raw_with_tables();
+        self.select_source = Some((sql, binds, tables));
         Ok(self)
     }
 
-    fn extract_row(
-        exprs: impl IntoIterator<Item = Expr<T>>,
-    ) -> (Vec<String>, Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>) {
+    fn extract_row(exprs: impl IntoIterator<Item = Expr<T>>) -> (Vec<String>, Row) {
         let mut cols = vec![];
         let mut row = vec![];
         for expr in exprs {
@@ -147,7 +156,7 @@ impl<T: Table> SqlInsert<T> {
     /// skipped). Null-only columns are dropped by default because `SqlParam::Null`
     /// encodes as `void`, which Postgres refuses to coerce into enum or other
     /// non-inferrable column types.
-    pub fn include_nulls(mut self) -> Self {
+    pub const fn include_nulls(mut self) -> Self {
         self.include_nulls = true;
         self
     }
@@ -166,12 +175,18 @@ impl<T: Table> SqlBase for SqlInsert<T> {
         sql.push_str(&self.columns.join(", "));
         sql.push(')');
         let mut binds = vec![];
-        prepend_ctes(self.ctes, &mut sql, &mut binds);
+        let mut tables: Vec<&'static str> = vec![T::TABLE_NAME];
+        prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
 
-        if let Some((select_sql, select_binds)) = self.select_source {
+        if let Some((select_sql, select_binds, select_tables)) = self.select_source {
             sql.push(' ');
             sql.push_str(&select_sql);
             binds.extend(select_binds);
+            for t in select_tables {
+                if !tables.contains(&t) {
+                    tables.push(t);
+                }
+            }
         } else {
             for (i, row) in self.rows.into_iter().enumerate() {
                 if i == 0 {
@@ -219,14 +234,12 @@ impl<T: Table> SqlBase for SqlInsert<T> {
         }
 
         push_returning(self.returning, &mut sql);
-        Ok(UnbindedQuery { sql, binds })
+        Ok(UnbindedQuery { sql, binds, tables })
     }
 }
 
-fn drop_null_only_columns(
-    columns: &mut Vec<String>,
-    rows: &mut Vec<Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>>,
-) {
+#[allow(clippy::ptr_arg)] // both args mutated via Vec::retain, slices won't do
+fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>) {
     let mut keep = vec![false; columns.len()];
     for row in rows.iter() {
         for (i, cell) in row.iter().enumerate() {

@@ -22,11 +22,11 @@ pub struct SqlDelete<T: Table> {
 }
 
 impl<T: Table> SqlDelete<T> {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self::new_with(vec![])
     }
 
-    pub(super) fn new_with(ctes: Vec<Cte>) -> Self {
+    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self {
         Self {
             filters: Vec::new(),
             returning: Returning::None,
@@ -40,7 +40,7 @@ impl<T: Table> SqlDelete<T> {
     /// Opt in to deleting all rows without a WHERE clause.
     /// Required because `.build()` will error if neither `.filter()` nor
     /// `.delete_all()` is called — a safety guard against accidental full-table deletes.
-    pub fn delete_all(mut self) -> Self {
+    pub const fn delete_all(mut self) -> Self {
         self.delete_all = true;
         self
     }
@@ -57,9 +57,9 @@ impl<T: Table> SqlDelete<T> {
         self
     }
 
-    /// Adds WHERE conditions that are ANDed together.
+    /// Adds WHERE conditions that are `ANDed` together.
     pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
-        self.filters.extend(filters.into_iter().map(|x| x.eval()));
+        self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
@@ -95,6 +95,7 @@ impl<T: Table> SqlBase for SqlDelete<T> {
         sql.push_str("DELETE FROM \"");
         sql.push_str(T::TABLE_NAME);
         sql.push('"');
+        let mut tables: Vec<&'static str> = vec![T::TABLE_NAME];
         if !self.using.is_empty() {
             sql.push_str(" USING ");
             for (i, table) in self.using.iter().enumerate() {
@@ -104,14 +105,17 @@ impl<T: Table> SqlBase for SqlDelete<T> {
                 sql.push('"');
                 sql.push_str(table);
                 sql.push('"');
+                if !tables.contains(table) {
+                    tables.push(*table);
+                }
             }
         }
         let mut binds = vec![];
-        prepend_ctes(self.ctes, &mut sql, &mut binds);
+        prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
         push_returning(self.returning, &mut sql);
 
-        Ok(UnbindedQuery { sql, binds })
+        Ok(UnbindedQuery { sql, binds, tables })
     }
 }
 

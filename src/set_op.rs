@@ -28,7 +28,8 @@ enum SetOpKind {
 pub struct SqlSetOp {
     first_sql: String,
     first_binds: Vec<SqlParam>,
-    rest: Vec<(SetOpKind, String, Vec<SqlParam>)>,
+    rest: Vec<(SetOpKind, String, Vec<SqlParam>, Vec<&'static str>)>,
+    tables: Vec<&'static str>,
     order_by: Vec<String>,
     limit: Option<u64>,
     offset: Option<u64>,
@@ -60,14 +61,23 @@ impl SqlSetOp {
     }
 
     fn with_kind(first: SqlSelect, kind: SetOpKind, second: SqlSelect) -> Self {
-        let (first_sql, first_binds) =
-            SqlBase::build(first).expect("set op: first query build failed").into_raw();
-        let (second_sql, second_binds) =
-            SqlBase::build(second).expect("set op: second query build failed").into_raw();
+        let (first_sql, first_binds, first_tables) = SqlBase::build(first)
+            .expect("set op: first query build failed")
+            .into_raw_with_tables();
+        let (second_sql, second_binds, second_tables) = SqlBase::build(second)
+            .expect("set op: second query build failed")
+            .into_raw_with_tables();
+        let mut tables = first_tables;
+        for t in &second_tables {
+            if !tables.contains(t) {
+                tables.push(*t);
+            }
+        }
         Self {
             first_sql,
             first_binds,
-            rest: vec![(kind, second_sql, second_binds)],
+            rest: vec![(kind, second_sql, second_binds, second_tables)],
+            tables,
             order_by: Vec::new(),
             limit: None,
             offset: None,
@@ -75,36 +85,51 @@ impl SqlSetOp {
     }
 
     fn push(mut self, kind: SetOpKind, other: SqlSelect) -> Self {
-        let (sql, binds) = SqlBase::build(other).expect("set op: query build failed").into_raw();
-        self.rest.push((kind, sql, binds));
+        let (sql, binds, other_tables) =
+            SqlBase::build(other).expect("set op: query build failed").into_raw_with_tables();
+        for t in &other_tables {
+            if !self.tables.contains(t) {
+                self.tables.push(*t);
+            }
+        }
+        self.rest.push((kind, sql, binds, other_tables));
         self
     }
 
+    #[must_use] 
     pub fn union(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::Union, other)
     }
 
+    #[must_use] 
     pub fn union_all(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::UnionAll, other)
     }
 
+    #[must_use] 
     pub fn intersect(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::Intersect, other)
     }
 
+    #[must_use] 
     pub fn intersect_all(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::IntersectAll, other)
     }
 
+    #[must_use] 
     pub fn except(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::Except, other)
     }
 
+    #[must_use] 
     pub fn except_all(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::ExceptAll, other)
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Appends an ORDER BY clause on the combined result.
+    #[must_use]
     pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
         let mut s = column.eval().unwrap().0;
         s.push(' ');
@@ -114,13 +139,15 @@ impl SqlSetOp {
     }
 
     /// Sets the maximum number of rows to return from the combined result.
-    pub fn limit(mut self, n: u64) -> Self {
+    #[must_use] 
+    pub const fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self
     }
 
     /// Sets the number of rows to skip in the combined result.
-    pub fn offset(mut self, n: u64) -> Self {
+    #[must_use] 
+    pub const fn offset(mut self, n: u64) -> Self {
         self.offset = Some(n);
         self
     }
@@ -131,7 +158,7 @@ impl SqlBase for SqlSetOp {
         let mut sql = self.first_sql;
         let mut binds = self.first_binds;
 
-        for (kind, part_sql, part_binds) in self.rest {
+        for (kind, part_sql, part_binds, _part_tables) in self.rest {
             sql.push(' ');
             sql.push_str(kind.as_ref());
             sql.push(' ');
@@ -145,14 +172,14 @@ impl SqlBase for SqlSetOp {
         }
         if let Some(limit) = self.limit {
             sql.push_str(" LIMIT $#");
-            binds.push(SqlParam::I64(limit as i64));
+            binds.push(SqlParam::I64(i64::try_from(limit).unwrap_or(i64::MAX)));
         }
         if let Some(offset) = self.offset {
             sql.push_str(" OFFSET $#");
-            binds.push(SqlParam::I64(offset as i64));
+            binds.push(SqlParam::I64(i64::try_from(offset).unwrap_or(i64::MAX)));
         }
 
-        Ok(UnbindedQuery { sql, binds })
+        Ok(UnbindedQuery { sql, binds, tables: self.tables })
     }
 }
 

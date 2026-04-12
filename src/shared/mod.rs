@@ -7,14 +7,14 @@ use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{Encode, FromRow, Postgres, Type, postgres::PgRow};
 use uuid::Uuid;
 
-pub(crate) mod cached;
+pub mod cached;
 pub mod error;
 pub mod expr;
 pub mod unbinded_query;
 pub mod value;
 
 pub use unbinded_query::UnbindedQuery;
-pub(crate) use unbinded_query::push_conditions;
+pub use unbinded_query::push_conditions;
 
 use crate::shared::value::SqlParam;
 
@@ -35,13 +35,19 @@ pub trait SqlColId {
     fn id() -> Self;
 }
 
-pub(crate) struct Cte {
+pub struct Cte {
     pub name: String,
     pub sql: String,
     pub binds: Vec<SqlParam>,
+    pub tables: Vec<&'static str>,
 }
 
-pub(crate) fn prepend_ctes(ctes: Vec<Cte>, sql: &mut String, binds: &mut Vec<SqlParam>) {
+pub fn prepend_ctes(
+    ctes: Vec<Cte>,
+    sql: &mut String,
+    binds: &mut Vec<SqlParam>,
+    tables: &mut Vec<&'static str>,
+) {
     if ctes.is_empty() {
         return;
     }
@@ -56,21 +62,26 @@ pub(crate) fn prepend_ctes(ctes: Vec<Cte>, sql: &mut String, binds: &mut Vec<Sql
         prefix.push_str(&cte.sql);
         prefix.push(')');
         cte_binds.extend(cte.binds);
+        for t in cte.tables {
+            if !tables.contains(&t) {
+                tables.push(t);
+            }
+        }
     }
     prefix.push(' ');
     prefix.push_str(sql);
     *sql = prefix;
-    cte_binds.extend(binds.drain(..));
+    cte_binds.append(binds);
     *binds = cte_binds;
 }
 
-pub(crate) enum Returning {
+pub enum Returning {
     None,
     All,
     Columns(Vec<String>),
 }
 
-pub(crate) fn push_returning(returning: Returning, sql: &mut String) {
+pub fn push_returning(returning: Returning, sql: &mut String) {
     match returning {
         Returning::None => {}
         Returning::All => {

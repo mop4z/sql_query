@@ -12,26 +12,29 @@ use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
 /// count go to debug; full bind values go to trace.
 #[inline]
 fn trace_sql(sql: &str, binds: &[SqlParam]) {
-    tracing::debug!(target: "sql_query", sql = %sql, binds = binds.len(), "executing query");
-    tracing::trace!(target: "sql_query", binds = ?binds, "bind values");
+    tracing::debug!("[{}] {sql}", binds.len());
+    tracing::trace!("{binds:?}");
 }
 
 /// A query whose placeholders have not yet been renumbered or bound.
 pub struct UnbindedQuery {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
+    pub(crate) tables: Vec<&'static str>,
 }
 
 /// A finalized query with renumbered placeholders, ready to execute without row mapping.
 pub struct BoundQuery {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
+    pub(crate) tables: Vec<&'static str>,
 }
 
 /// A finalized query that deserializes each row into `T` via `FromRow`.
 pub struct BoundQueryAs<T> {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
+    pub(crate) tables: Vec<&'static str>,
     _t: PhantomData<T>,
 }
 
@@ -39,6 +42,7 @@ pub struct BoundQueryAs<T> {
 pub struct BoundQueryScalar<T> {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
+    pub(crate) tables: Vec<&'static str>,
     _t: PhantomData<T>,
 }
 
@@ -46,6 +50,7 @@ pub struct BoundQueryScalar<T> {
 pub struct CachedBoundQueryAs<T> {
     sql: String,
     binds: Vec<SqlParam>,
+    tables: Vec<&'static str>,
     ttl: u64,
     _t: PhantomData<T>,
 }
@@ -54,7 +59,24 @@ pub struct CachedBoundQueryAs<T> {
 pub struct CachedBoundQueryScalar<T> {
     sql: String,
     binds: Vec<SqlParam>,
+    tables: Vec<&'static str>,
     ttl: u64,
+    _t: PhantomData<T>,
+}
+
+/// A `BoundQuery` that invalidates all cached entries tagged with the
+/// underlying query's tables after the write executes.
+pub struct InvalidatingBoundQuery {
+    sql: String,
+    binds: Vec<SqlParam>,
+    tables: Vec<&'static str>,
+}
+
+/// A `BoundQueryAs<T>` (write with RETURNING) that invalidates after fetch.
+pub struct InvalidatingBoundQueryAs<T> {
+    sql: String,
+    binds: Vec<SqlParam>,
+    tables: Vec<&'static str>,
     _t: PhantomData<T>,
 }
 
@@ -171,7 +193,7 @@ fn renumber_placeholders(sql: &str) -> String {
     out
 }
 
-pub(crate) fn push_conditions(
+pub fn push_conditions(
     keyword: &str,
     conditions: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     sql: &mut String,
@@ -200,23 +222,33 @@ pub(crate) fn push_conditions(
 // ---------------------------------------------------------------------------
 
 impl UnbindedQuery {
+    #[must_use]
     pub fn into_raw(self) -> (String, Vec<SqlParam>) {
         (self.sql, self.binds)
     }
 
+    /// Like `into_raw` but also returns the static table list this query touches.
+    /// Used by parent builders that embed a subquery and need to merge tables.
+    pub(crate) fn into_raw_with_tables(self) -> (String, Vec<SqlParam>, Vec<&'static str>) {
+        (self.sql, self.binds, self.tables)
+    }
+
+    #[must_use]
     pub fn bind(self) -> BoundQuery {
         let sql = renumber_placeholders(&self.sql);
-        BoundQuery { sql, binds: self.binds }
+        BoundQuery { sql, binds: self.binds, tables: self.tables }
     }
 
+    #[must_use]
     pub fn bind_as<T>(self) -> BoundQueryAs<T> {
         let sql = renumber_placeholders(&self.sql);
-        BoundQueryAs { sql, binds: self.binds, _t: PhantomData }
+        BoundQueryAs { sql, binds: self.binds, tables: self.tables, _t: PhantomData }
     }
 
+    #[must_use]
     pub fn bind_scalar<T>(self) -> BoundQueryScalar<T> {
         let sql = renumber_placeholders(&self.sql);
-        BoundQueryScalar { sql, binds: self.binds, _t: PhantomData }
+        BoundQueryScalar { sql, binds: self.binds, tables: self.tables, _t: PhantomData }
     }
 }
 
@@ -225,6 +257,8 @@ impl UnbindedQuery {
 // ---------------------------------------------------------------------------
 
 impl BoundQuery {
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn execute<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -237,6 +271,8 @@ impl BoundQuery {
         q.execute(executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -249,6 +285,8 @@ impl BoundQuery {
         q.fetch_all(executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -261,6 +299,8 @@ impl BoundQuery {
         q.fetch_one(executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -280,12 +320,33 @@ impl BoundQuery {
 
 impl<T> BoundQueryAs<T> {
     /// Returns a `CachedBoundQueryAs` that checks Redis before hitting Postgres.
+    #[must_use]
     pub fn cached(self, ttl_secs: u64) -> CachedBoundQueryAs<T> {
-        CachedBoundQueryAs { sql: self.sql, binds: self.binds, ttl: ttl_secs, _t: PhantomData }
+        CachedBoundQueryAs {
+            sql: self.sql,
+            binds: self.binds,
+            tables: self.tables,
+            ttl: ttl_secs,
+            _t: PhantomData,
+        }
+    }
+
+    /// Returns an `InvalidatingBoundQueryAs` that wipes any cached entries
+    /// tagged with this query's tables after the write succeeds.
+    #[must_use]
+    pub fn invalidate(self) -> InvalidatingBoundQueryAs<T> {
+        InvalidatingBoundQueryAs {
+            sql: self.sql,
+            binds: self.binds,
+            tables: self.tables,
+            _t: PhantomData,
+        }
     }
 }
 
 impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -293,6 +354,8 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         run_query_as(&self.sql, self.binds, executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -300,6 +363,8 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         run_query_as_one(&self.sql, self.binds, executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -307,6 +372,8 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         run_query_as_optional(&self.sql, self.binds, executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn execute<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -319,6 +386,8 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         q.execute(executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_paginated(self, pool: &PgPool) -> Result<(Vec<T>, i64), sqlx::Error> {
         let count_sql = format!("SELECT COUNT(*) FROM ({}) AS _sq", self.sql);
         trace_sql(&count_sql, &self.binds);
@@ -326,8 +395,8 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
         for b in &self.binds {
             count_q = count_q.bind(b.clone());
         }
-        let total: i64 = count_q.fetch_one(&*pool).await?;
-        let items = run_query_as(&self.sql, self.binds, &*pool).await?;
+        let total: i64 = count_q.fetch_one(pool).await?;
+        let items = run_query_as(&self.sql, self.binds, pool).await?;
         Ok((items, total))
     }
 }
@@ -340,6 +409,8 @@ impl<T> CachedBoundQueryAs<T>
 where
     T: for<'r> FromRow<'r, PgRow> + Send + Unpin + Serialize + DeserializeOwned,
 {
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -348,9 +419,13 @@ where
         let key = cached::cache_key(&self.sql, &self.binds);
         let sql = self.sql;
         let binds = self.binds;
-        cached::with_cache(&key, self.ttl, redis, || run_query_as(&sql, binds, executor)).await
+        let tables = self.tables;
+        cached::with_cache(&key, self.ttl, &tables, redis, || run_query_as(&sql, binds, executor))
+            .await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -359,9 +434,15 @@ where
         let key = cached::cache_key(&self.sql, &self.binds);
         let sql = self.sql;
         let binds = self.binds;
-        cached::with_cache(&key, self.ttl, redis, || run_query_as_one(&sql, binds, executor)).await
+        let tables = self.tables;
+        cached::with_cache(&key, self.ttl, &tables, redis, || {
+            run_query_as_one(&sql, binds, executor)
+        })
+        .await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -370,8 +451,11 @@ where
         let key = cached::cache_key(&self.sql, &self.binds);
         let sql = self.sql;
         let binds = self.binds;
-        cached::with_cache(&key, self.ttl, redis, || run_query_as_optional(&sql, binds, executor))
-            .await
+        let tables = self.tables;
+        cached::with_cache(&key, self.ttl, &tables, redis, || {
+            run_query_as_optional(&sql, binds, executor)
+        })
+        .await
     }
 }
 
@@ -381,8 +465,15 @@ where
 
 impl<T> BoundQueryScalar<T> {
     /// Returns a `CachedBoundQueryScalar` that checks Redis before hitting Postgres.
+    #[must_use]
     pub fn cached(self, ttl_secs: u64) -> CachedBoundQueryScalar<T> {
-        CachedBoundQueryScalar { sql: self.sql, binds: self.binds, ttl: ttl_secs, _t: PhantomData }
+        CachedBoundQueryScalar {
+            sql: self.sql,
+            binds: self.binds,
+            tables: self.tables,
+            ttl: ttl_secs,
+            _t: PhantomData,
+        }
     }
 }
 
@@ -391,6 +482,8 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin,
 {
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -398,6 +491,8 @@ where
         run_scalar_one(&self.sql, self.binds, executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -405,6 +500,8 @@ where
         run_scalar_optional(&self.sql, self.binds, executor).await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -422,6 +519,8 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin + Serialize + DeserializeOwned,
 {
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -430,9 +529,13 @@ where
         let key = cached::cache_key(&self.sql, &self.binds);
         let sql = self.sql;
         let binds = self.binds;
-        cached::with_cache(&key, self.ttl, redis, || run_scalar_one(&sql, binds, executor)).await
+        let tables = self.tables;
+        cached::with_cache(&key, self.ttl, &tables, redis, || run_scalar_one(&sql, binds, executor))
+            .await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -441,10 +544,15 @@ where
         let key = cached::cache_key(&self.sql, &self.binds);
         let sql = self.sql;
         let binds = self.binds;
-        cached::with_cache(&key, self.ttl, redis, || run_scalar_optional(&sql, binds, executor))
-            .await
+        let tables = self.tables;
+        cached::with_cache(&key, self.ttl, &tables, redis, || {
+            run_scalar_optional(&sql, binds, executor)
+        })
+        .await
     }
 
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
@@ -453,7 +561,107 @@ where
         let key = cached::cache_key(&self.sql, &self.binds);
         let sql = self.sql;
         let binds = self.binds;
-        cached::with_cache(&key, self.ttl, redis, || run_scalar(&sql, binds, executor)).await
+        let tables = self.tables;
+        cached::with_cache(&key, self.ttl, &tables, redis, || run_scalar(&sql, binds, executor))
+            .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BoundQuery — invalidate hook
+// ---------------------------------------------------------------------------
+
+impl BoundQuery {
+    /// Returns an `InvalidatingBoundQuery` that wipes any cached entries
+    /// tagged with this query's tables after the write succeeds.
+    #[must_use]
+    pub fn invalidate(self) -> InvalidatingBoundQuery {
+        InvalidatingBoundQuery { sql: self.sql, binds: self.binds, tables: self.tables }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InvalidatingBoundQuery
+// ---------------------------------------------------------------------------
+
+impl InvalidatingBoundQuery {
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
+    pub async fn execute<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<PgQueryResult, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
+        let mut q = sqlx::query(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        let result = q.execute(executor).await?;
+        cached::invalidate_tables(&self.tables, redis).await?;
+        Ok(result)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InvalidatingBoundQueryAs<T>
+// ---------------------------------------------------------------------------
+
+impl<T> InvalidatingBoundQueryAs<T>
+where
+    T: for<'r> FromRow<'r, PgRow> + Send + Unpin,
+{
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
+    pub async fn fetch_all<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Vec<T>, sqlx::Error> {
+        let rows = run_query_as(&self.sql, self.binds, executor).await?;
+        cached::invalidate_tables(&self.tables, redis).await?;
+        Ok(rows)
+    }
+
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
+    pub async fn fetch_one<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<T, sqlx::Error> {
+        let row = run_query_as_one(&self.sql, self.binds, executor).await?;
+        cached::invalidate_tables(&self.tables, redis).await?;
+        Ok(row)
+    }
+
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
+    pub async fn fetch_optional<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<Option<T>, sqlx::Error> {
+        let row = run_query_as_optional(&self.sql, self.binds, executor).await?;
+        cached::invalidate_tables(&self.tables, redis).await?;
+        Ok(row)
+    }
+
+    /// # Errors
+    /// Propagates `sqlx::Error` from the underlying database call.
+    pub async fn execute<'e>(
+        self,
+        executor: impl Executor<'e, Database = Postgres>,
+        redis: &mut redis::aio::MultiplexedConnection,
+    ) -> Result<PgQueryResult, sqlx::Error> {
+        trace_sql(&self.sql, &self.binds);
+        let mut q = sqlx::query(&self.sql);
+        for b in self.binds {
+            q = q.bind(b);
+        }
+        let result = q.execute(executor).await?;
+        cached::invalidate_tables(&self.tables, redis).await?;
+        Ok(result)
     }
 }
 

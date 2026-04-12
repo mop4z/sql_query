@@ -1,15 +1,12 @@
+#[cfg(test)]
+use crate::shared::expr::Expr;
 use crate::{
     SqlBase,
     shared::{
-        Cte, Returning, Table, UnbindedQuery,
-        error::SqlQueryError,
-        expr::EvalExpr,
-        prepend_ctes, push_conditions, push_returning,
-        value::SqlParam,
+        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::EvalExpr, prepend_ctes,
+        push_conditions, push_returning, value::SqlParam,
     },
 };
-#[cfg(test)]
-use crate::shared::expr::Expr;
 
 /// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.
 pub struct SqlUpdate {
@@ -17,6 +14,9 @@ pub struct SqlUpdate {
     set_clauses: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     from_tables: Vec<String>,
     from_binds: Vec<SqlParam>,
+    /// Static tables touched by this update (target table + any FROM tables /
+    /// FROM-subquery tables / CTE tables). Drives invalidation reach.
+    tables: Vec<&'static str>,
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
     ctes: Vec<Cte>,
@@ -34,6 +34,7 @@ impl SqlUpdate {
             set_clauses: Vec::new(),
             from_tables: Vec::new(),
             from_binds: Vec::new(),
+            tables: vec![T::TABLE_NAME],
             filters: Vec::new(),
             returning: Returning::None,
             ctes,
@@ -41,10 +42,16 @@ impl SqlUpdate {
         }
     }
 
+    fn add_table(&mut self, t: &'static str) {
+        if !self.tables.contains(&t) {
+            self.tables.push(t);
+        }
+    }
+
     /// Add `SET col = val` clauses. Pass `Col::Name.eq(val)` expressions,
     /// or use `Expr::new().column(col).eq().now()` for computed values.
     pub fn set<E: EvalExpr>(mut self, exprs: impl IntoIterator<Item = E>) -> Self {
-        self.set_clauses.extend(exprs.into_iter().map(|x| x.eval()));
+        self.set_clauses.extend(exprs.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
@@ -56,13 +63,16 @@ impl SqlUpdate {
         s.push_str(T::TABLE_NAME);
         s.push('"');
         self.from_tables.push(s);
+        self.add_table(T::TABLE_NAME);
         self
     }
 
     /// Add a `FROM (subquery) alias` clause for referencing a subquery in SET/WHERE.
+    #[must_use]
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_subquery(mut self, alias: &str, query: impl SqlBase) -> Self {
         let uq = query.build().expect("from_subquery build failed");
-        let (sub_sql, sub_binds) = uq.into_raw();
+        let (sub_sql, sub_binds, sub_tables) = uq.into_raw_with_tables();
         let mut s = String::with_capacity(sub_sql.len() + alias.len() + 4);
         s.push('(');
         s.push_str(&sub_sql);
@@ -70,12 +80,15 @@ impl SqlUpdate {
         s.push_str(alias);
         self.from_tables.push(s);
         self.from_binds.extend(sub_binds);
+        for t in sub_tables {
+            self.add_table(t);
+        }
         self
     }
 
-    /// Adds WHERE conditions that are ANDed together.
+    /// Adds WHERE conditions that are `ANDed` together.
     pub fn filter<E: EvalExpr>(mut self, filters: impl IntoIterator<Item = E>) -> Self {
-        self.filters.extend(filters.into_iter().map(|x| x.eval()));
+        self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
@@ -99,7 +112,7 @@ impl SqlUpdate {
     }
 
     /// Forces SET clauses with NULL values to be included (normally skipped).
-    pub fn include_nulls(mut self) -> Self {
+    pub const fn include_nulls(mut self) -> Self {
         self.include_nulls = true;
         self
     }
@@ -121,7 +134,8 @@ impl SqlBase for SqlUpdate {
         sql.push_str(self.table);
         sql.push_str("\" SET ");
         let mut binds = vec![];
-        prepend_ctes(self.ctes, &mut sql, &mut binds);
+        let mut tables = self.tables;
+        prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
 
         let include_nulls = self.include_nulls;
         let target_prefix = format!("\"{}\".", self.table);
@@ -154,7 +168,7 @@ impl SqlBase for SqlUpdate {
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
         push_returning(self.returning, &mut sql);
 
-        Ok(UnbindedQuery { sql, binds })
+        Ok(UnbindedQuery { sql, binds, tables })
     }
 }
 
@@ -283,9 +297,9 @@ mod tests {
     #[test]
     fn update_with_or_filter() {
         let (sql, binds) = build(
-            SqlUpdate::new::<Users>().set([UsersCol::Age.eq(0i32)]).filter([UsersCol::Name
-                .eq("alice")
-                .or(UsersCol::Name.eq("bob"))]),
+            SqlUpdate::new::<Users>()
+                .set([UsersCol::Age.eq(0i32)])
+                .filter([UsersCol::Name.eq("alice").or(UsersCol::Name.eq("bob"))]),
         );
         assert_eq!(
             sql,

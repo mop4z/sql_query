@@ -23,6 +23,8 @@ use crate::{
 /// like `.val()`, `.eq()` on `ColOps`, `.in_()`, etc. all accept `impl EvalExpr`,
 /// so you can pass plain values, column references, or full sub-expressions.
 pub trait EvalExpr {
+    /// # Errors
+    /// Returns a `SqlQueryError` if the expression cannot be composed.
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError>;
 }
 
@@ -99,6 +101,7 @@ impl<T: Table> ExprBuf<T> {
         self.binds.extend(expr_binds);
     }
 
+    #[allow(clippy::unnecessary_wraps)] // mirrors EvalExpr trait shape
     fn eval(self) -> Result<(String, Vec<SqlParam>), SqlQueryError> {
         Ok((self.buf, self.binds.into_vec()))
     }
@@ -132,8 +135,15 @@ impl<T: Table> ExprBuf<T> {
 #[derive(Debug, Clone)]
 pub struct Expr<T: Table>(ExprBuf<T>);
 
+impl<T: Table> Default for Expr<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Table> Expr<T> {
     /// Start a new empty expression.
+    #[must_use]
     pub fn new() -> Self {
         Self(ExprBuf::new())
     }
@@ -141,6 +151,7 @@ impl<T: Table> Expr<T> {
     // -- column references ---------------------------------------------------
 
     /// Append a qualified column: `"table".col`.
+    #[must_use]
     pub fn column(mut self, col: T::Col) -> Self {
         self.0.push_col(col);
         self
@@ -149,6 +160,7 @@ impl<T: Table> Expr<T> {
     /// Append a qualified column from a different table: `"other_table".col`.
     ///
     /// Useful in UPDATE ... SET or JOIN conditions that reference across tables.
+    #[must_use]
     pub fn column_of<U: Table>(mut self, col: U::Col) -> Self {
         self.0.push_col_of::<U>(col);
         self
@@ -157,6 +169,7 @@ impl<T: Table> Expr<T> {
     /// Reinterpret this expression as bound to table `U`. The SQL and binds are
     /// preserved verbatim — only the phantom table changes. Lets an expression
     /// built against one table be spliced into a query against another.
+    #[must_use]
     pub fn coerce<U: Table>(self) -> Expr<U> {
         Expr(ExprBuf { buf: self.0.buf, binds: self.0.binds, _t: PhantomData })
     }
@@ -165,12 +178,14 @@ impl<T: Table> Expr<T> {
 
     /// Append a value or expression. Scalars become `$#` with a bind parameter;
     /// expressions splice their SQL and binds directly.
+    #[must_use]
     pub fn val(mut self, v: impl EvalExpr) -> Self {
         self.0.push_eval(v);
         self
     }
 
     /// Start an expression with `*` — for use with aggregates like `COUNT(*)`.
+    #[must_use]
     pub fn star() -> Self {
         Self::new().raw("*")
     }
@@ -178,6 +193,7 @@ impl<T: Table> Expr<T> {
     /// Start an expression with `"T".*` — the qualified all-columns form. Use
     /// when a JOIN pulls in columns from multiple tables and you want only
     /// the target table's columns: `SELECT "users".* FROM "users" JOIN ...`.
+    #[must_use]
     pub fn t_star() -> Self {
         let mut e = Self::new();
         e.0.buf.push('"');
@@ -187,30 +203,35 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append `NOW()` — the current timestamp.
+    #[must_use]
     pub fn now(mut self) -> Self {
         self.0.push("NOW()");
         self
     }
 
     /// Append `NULL`.
+    #[must_use]
     pub fn null(mut self) -> Self {
         self.0.push("NULL");
         self
     }
 
     /// Append `TRUE`.
+    #[must_use]
     pub fn true_(mut self) -> Self {
         self.0.push("TRUE");
         self
     }
 
     /// Append `FALSE`.
+    #[must_use]
     pub fn false_(mut self) -> Self {
         self.0.push("FALSE");
         self
     }
 
     /// Append raw SQL verbatim. No escaping or parameterisation.
+    #[must_use]
     pub fn raw(mut self, s: &str) -> Self {
         self.0.push(s);
         self
@@ -219,6 +240,7 @@ impl<T: Table> Expr<T> {
     // -- comparison operators ------------------------------------------------
 
     /// Append ` = val`.
+    #[must_use]
     pub fn eq(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" = ");
         self.0.push_eval(val);
@@ -226,6 +248,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` != val`.
+    #[must_use]
     pub fn neq(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" != ");
         self.0.push_eval(val);
@@ -233,6 +256,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` > val`.
+    #[must_use]
     pub fn gt(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" > ");
         self.0.push_eval(val);
@@ -240,6 +264,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` >= val`.
+    #[must_use]
     pub fn gte(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" >= ");
         self.0.push_eval(val);
@@ -247,6 +272,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` < val`.
+    #[must_use]
     pub fn lt(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" < ");
         self.0.push_eval(val);
@@ -254,6 +280,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` <= val`.
+    #[must_use]
     pub fn lte(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" <= ");
         self.0.push_eval(val);
@@ -263,6 +290,8 @@ impl<T: Table> Expr<T> {
     // -- arithmetic operators ------------------------------------------------
 
     /// Append ` + val`.
+    #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn add(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" + ");
         self.0.push_eval(val);
@@ -270,6 +299,8 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` - val`.
+    #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" - ");
         self.0.push_eval(val);
@@ -277,6 +308,8 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` * val`.
+    #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" * ");
         self.0.push_eval(val);
@@ -284,6 +317,8 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` / val`.
+    #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn div(mut self, val: impl EvalExpr) -> Self {
         self.0.push(" / ");
         self.0.push_eval(val);
@@ -293,6 +328,7 @@ impl<T: Table> Expr<T> {
     // -- array operators -----------------------------------------------------
 
     /// Append ` && ` — Postgres array overlap operator.
+    #[must_use]
     pub fn overlap(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" && ");
         self.0.push_eval(v);
@@ -301,37 +337,33 @@ impl<T: Table> Expr<T> {
 
     // -- set operators -------------------------------------------------------
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Append ` IN ($1)` for a scalar, or ` = ANY($1)` when `v` evaluates to a
     /// single array bind — Postgres rejects `col IN (array)` (it expects a
     /// tuple), so array inputs are rewritten into the equivalent ANY form.
+    #[must_use]
     pub fn in_(mut self, v: impl EvalExpr) -> Self {
         let (sql, binds) = v.eval().unwrap();
-        if binds.len() == 1 && binds[0].is_array() {
-            self.0.push(" = ANY(");
-            self.0.push(&sql);
-            self.0.push(")");
-        } else {
-            self.0.push(" IN (");
-            self.0.push(&sql);
-            self.0.push(")");
-        }
+        let prefix = if binds.len() == 1 && binds[0].is_array() { " = ANY(" } else { " IN (" };
+        self.0.push(prefix);
+        self.0.push(&sql);
+        self.0.push(")");
         self.0.binds.extend(binds);
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Append ` NOT IN ($1)` for a scalar, or ` <> ALL($1)` when `v` evaluates
     /// to a single array bind.
+    #[must_use]
     pub fn not_in(mut self, v: impl EvalExpr) -> Self {
         let (sql, binds) = v.eval().unwrap();
-        if binds.len() == 1 && binds[0].is_array() {
-            self.0.push(" <> ALL(");
-            self.0.push(&sql);
-            self.0.push(")");
-        } else {
-            self.0.push(" NOT IN (");
-            self.0.push(&sql);
-            self.0.push(")");
-        }
+        let prefix = if binds.len() == 1 && binds[0].is_array() { " <> ALL(" } else { " NOT IN (" };
+        self.0.push(prefix);
+        self.0.push(&sql);
+        self.0.push(")");
         self.0.binds.extend(binds);
         self
     }
@@ -339,6 +371,7 @@ impl<T: Table> Expr<T> {
     // -- any / all -----------------------------------------------------------
 
     /// Append ` = ANY($1)`. Use with array params for Postgres array matching.
+    #[must_use]
     pub fn any(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" = ANY(");
         self.0.push_eval(v);
@@ -347,6 +380,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` = ALL($1)`.
+    #[must_use]
     pub fn all(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" = ALL(");
         self.0.push_eval(v);
@@ -356,7 +390,10 @@ impl<T: Table> Expr<T> {
 
     // -- subquery set ops ----------------------------------------------------
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Append ` IN (SELECT ...)` with a subquery.
+    #[must_use]
     pub fn in_select(mut self, q: SqlSelect) -> Self {
         self.0.push(" IN ");
         let uq = SqlBase::build(q).expect("subquery build failed");
@@ -368,7 +405,10 @@ impl<T: Table> Expr<T> {
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Append ` NOT IN (SELECT ...)` with a subquery.
+    #[must_use]
     pub fn not_in_select(mut self, q: SqlSelect) -> Self {
         self.0.push(" NOT IN ");
         let uq = SqlBase::build(q).expect("subquery build failed");
@@ -383,6 +423,7 @@ impl<T: Table> Expr<T> {
     // -- pattern matching ----------------------------------------------------
 
     /// Append ` LIKE $1`. Case-sensitive pattern match.
+    #[must_use]
     pub fn like(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" LIKE ");
         self.0.push_eval(v);
@@ -390,6 +431,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` ILIKE $1`. Case-insensitive pattern match (Postgres-specific).
+    #[must_use]
     pub fn ilike(mut self, v: impl EvalExpr) -> Self {
         self.0.push(" ILIKE ");
         self.0.push_eval(v);
@@ -399,12 +441,14 @@ impl<T: Table> Expr<T> {
     // -- null checks ---------------------------------------------------------
 
     /// Append ` IS NULL`.
+    #[must_use]
     pub fn is_null(mut self) -> Self {
         self.0.push(" IS NULL");
         self
     }
 
     /// Append ` IS NOT NULL`.
+    #[must_use]
     pub fn is_not_null(mut self) -> Self {
         self.0.push(" IS NOT NULL");
         self
@@ -413,6 +457,7 @@ impl<T: Table> Expr<T> {
     // -- range ---------------------------------------------------------------
 
     /// Append ` BETWEEN $1 AND $2`.
+    #[must_use]
     pub fn between(mut self, lo: impl EvalExpr, hi: impl EvalExpr) -> Self {
         self.0.push(" BETWEEN ");
         self.0.push_eval(lo);
@@ -424,59 +469,70 @@ impl<T: Table> Expr<T> {
     // -- aggregate / scalar wraps -------------------------------------------
 
     /// Wrap as `COUNT(buf)`.
+    #[must_use]
     pub fn count(mut self) -> Self {
         self.0.wrap_fn("COUNT");
         self
     }
 
     /// Wrap as `SUM(buf)`.
+    #[must_use]
     pub fn sum(mut self) -> Self {
         self.0.wrap_fn("SUM");
         self
     }
 
     /// Wrap as `AVG(buf)`.
+    #[must_use]
     pub fn avg(mut self) -> Self {
         self.0.wrap_fn("AVG");
         self
     }
 
     /// Wrap as `MIN(buf)` (SQL aggregate — smallest value in group).
+    #[must_use]
     pub fn min(mut self) -> Self {
         self.0.wrap_fn("MIN");
         self
     }
 
     /// Wrap as `MAX(buf)` (SQL aggregate — largest value in group).
+    #[must_use]
     pub fn max(mut self) -> Self {
         self.0.wrap_fn("MAX");
         self
     }
 
     /// Wrap as `LOWER(buf)`.
+    #[must_use]
     pub fn lower(mut self) -> Self {
         self.0.wrap_fn("LOWER");
         self
     }
 
     /// Wrap as `UPPER(buf)`.
+    #[must_use]
     pub fn upper(mut self) -> Self {
         self.0.wrap_fn("UPPER");
         self
     }
 
     /// Wrap as `ABS(buf)`.
+    #[must_use]
     pub fn abs(mut self) -> Self {
         self.0.wrap_fn("ABS");
         self
     }
 
     /// Wrap as `ROUND(buf, precision)`.
+    #[must_use]
     pub fn round(mut self, precision: i32) -> Self {
         self.0.wrap_fn_expr("ROUND", &precision.to_string(), vec![]);
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Append `FILTER (WHERE condition)` — Postgres aggregate filter clause.
     ///
     /// Restricts an aggregate to rows matching the condition without affecting
@@ -486,6 +542,7 @@ impl<T: Table> Expr<T> {
     /// // COUNT(*) FILTER (WHERE parse_status = 'Parsed')
     /// E::star().count().filter(ParseStatusCol::ParseStatus.eq(ParseStatus::Parsed))
     /// ```
+    #[must_use]
     pub fn filter(mut self, condition: impl EvalExpr) -> Self {
         let (sql, binds) = condition.eval().unwrap();
         self.0.push(" FILTER (WHERE ");
@@ -503,6 +560,7 @@ impl<T: Table> Expr<T> {
     ///     WindowSpec::new().partition_by(EmployeesCol::Dept.col())
     /// )
     /// ```
+    #[must_use]
     pub fn over(mut self, spec: WindowSpec) -> Self {
         let (sql, binds) = spec.render();
         self.0.push(" ");
@@ -512,27 +570,35 @@ impl<T: Table> Expr<T> {
     }
 
     /// Wrap as `UNNEST(buf)` — expand a Postgres array into rows.
+    #[must_use]
     pub fn unnest(mut self) -> Self {
         self.0.wrap_fn("UNNEST");
         self
     }
 
     /// Wrap as `DATE(buf)` — extract the date part of a timestamp.
+    #[must_use]
     pub fn date(mut self) -> Self {
         self.0.wrap_fn("DATE");
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Wrap as `GREATEST(buf, other)` — scalar comparison, returns the larger value.
     /// Not to be confused with `MAX()` which is an aggregate over a group.
+    #[must_use]
     pub fn greatest(mut self, other: impl EvalExpr) -> Self {
         let (sql, binds) = other.eval().unwrap();
         self.0.wrap_fn_expr("GREATEST", &sql, binds);
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Wrap as `LEAST(buf, other)` — scalar comparison, returns the smaller value.
     /// Not to be confused with `MIN()` which is an aggregate over a group.
+    #[must_use]
     pub fn least(mut self, other: impl EvalExpr) -> Self {
         let (sql, binds) = other.eval().unwrap();
         self.0.wrap_fn_expr("LEAST", &sql, binds);
@@ -545,6 +611,7 @@ impl<T: Table> Expr<T> {
     /// emitted as a single-quoted SQL literal (not a bind parameter), so two
     /// calls with the same key produce identical SQL — necessary for GROUP BY
     /// equality and expression-index matching.
+    #[must_use]
     pub fn json_get(mut self, key: &str) -> Self {
         self.0.push(" -> ");
         self.0.push_quoted_literal(key);
@@ -553,6 +620,7 @@ impl<T: Table> Expr<T> {
 
     /// Append ` ->> 'key'` — JSON field access, returns text. See `json_get`
     /// for why the key is inlined instead of parameterised.
+    #[must_use]
     pub fn json_get_text(mut self, key: &str) -> Self {
         self.0.push(" ->> ");
         self.0.push_quoted_literal(key);
@@ -561,6 +629,7 @@ impl<T: Table> Expr<T> {
 
     /// Shorthand for `col ->> 'key' = val` — JSONB text field equality. The
     /// key is inlined; `val` is still parameterised.
+    #[must_use]
     pub fn jsonb_text_eq(mut self, key: &str, val: impl EvalExpr) -> Self {
         self.0.push(" ->> ");
         self.0.push_quoted_literal(key);
@@ -571,6 +640,7 @@ impl<T: Table> Expr<T> {
 
     /// Append ` #> '{a,b}'` — JSON path access, returns JSON. The path is
     /// inlined as a single-quoted literal.
+    #[must_use]
     pub fn json_path(mut self, path: &str) -> Self {
         self.0.push(" #> ");
         self.0.push_quoted_literal(path);
@@ -578,6 +648,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` #>> '{a,b}'` — JSON path access, returns text.
+    #[must_use]
     pub fn json_path_text(mut self, path: &str) -> Self {
         self.0.push(" #>> ");
         self.0.push_quoted_literal(path);
@@ -587,6 +658,7 @@ impl<T: Table> Expr<T> {
     // -- coalesce ------------------------------------------------------------
 
     /// Wrap as `COALESCE(buf, fallback)` — returns the first non-null argument.
+    #[must_use]
     pub fn coalesce(mut self, fallback: impl EvalExpr) -> Self {
         self.0.buf.insert_str(0, "COALESCE(");
         self.0.push(", ");
@@ -598,24 +670,28 @@ impl<T: Table> Expr<T> {
     // -- string functions ----------------------------------------------------
 
     /// Wrap as `CONCAT(buf)`.
+    #[must_use]
     pub fn concat(mut self) -> Self {
         self.0.wrap_fn("CONCAT");
         self
     }
 
     /// Wrap as `LENGTH(buf)`.
+    #[must_use]
     pub fn length(mut self) -> Self {
         self.0.wrap_fn("LENGTH");
         self
     }
 
     /// Wrap as `TRIM(buf)`.
+    #[must_use]
     pub fn trim(mut self) -> Self {
         self.0.wrap_fn("TRIM");
         self
     }
 
     /// Wrap as `SUBSTRING(buf)`.
+    #[must_use]
     pub fn substring(mut self) -> Self {
         self.0.wrap_fn("SUBSTRING");
         self
@@ -624,6 +700,7 @@ impl<T: Table> Expr<T> {
     // -- cast / wrap ---------------------------------------------------------
 
     /// Append a Postgres type cast: `::ty` (e.g. `::text`, `::int`).
+    #[must_use]
     pub fn cast(mut self, ty: &str) -> Self {
         self.0.buf.push_str("::");
         self.0.buf.push_str(ty);
@@ -631,6 +708,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Wrap as `name(buf)` — escape hatch for SQL functions not yet built in.
+    #[must_use]
     pub fn wrap_raw(mut self, name: &str) -> Self {
         self.0.wrap_fn(name);
         self
@@ -639,6 +717,7 @@ impl<T: Table> Expr<T> {
     // -- alias ---------------------------------------------------------------
 
     /// Append ` AS name` — column alias for SELECT output.
+    #[must_use]
     pub fn alias(mut self, name: &str) -> Self {
         self.0.buf.push_str(" AS ");
         self.0.buf.push_str(name);
@@ -648,6 +727,7 @@ impl<T: Table> Expr<T> {
     // -- logical operators ---------------------------------------------------
 
     /// Wrap preceding expression in `()` then append ` AND expr`.
+    #[must_use]
     pub fn and(mut self, expr: impl EvalExpr) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(") AND ");
@@ -656,6 +736,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Wrap preceding expression in `()` then append ` OR expr`.
+    #[must_use]
     pub fn or(mut self, expr: impl EvalExpr) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(") OR ");
@@ -664,6 +745,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` AND expr` without parenthesising the preceding expression.
+    #[must_use]
     pub fn and_bare(mut self, expr: impl EvalExpr) -> Self {
         self.0.push(" AND ");
         self.0.push_eval(expr);
@@ -671,6 +753,7 @@ impl<T: Table> Expr<T> {
     }
 
     /// Append ` OR expr` without parenthesising the preceding expression.
+    #[must_use]
     pub fn or_bare(mut self, expr: impl EvalExpr) -> Self {
         self.0.push(" OR ");
         self.0.push_eval(expr);
@@ -678,12 +761,15 @@ impl<T: Table> Expr<T> {
     }
 
     /// Prepend `NOT ` to the entire expression.
+    #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn not(mut self) -> Self {
         self.0.buf.insert_str(0, "NOT ");
         self
     }
 
     /// Wrap the entire expression in `(…)`.
+    #[must_use]
     pub fn paren(mut self) -> Self {
         self.0.buf.insert(0, '(');
         self.0.push(")");
@@ -698,6 +784,7 @@ impl<T: Table> Expr<T> {
     /// // make_interval(hours => $1)
     /// E::new().func("make_interval", "hours => ", ttl_hours)
     /// ```
+    #[must_use]
     pub fn func(mut self, name: &str, prefix: &str, v: impl EvalExpr) -> Self {
         self.0.buf.push_str(name);
         self.0.buf.push('(');
@@ -710,6 +797,7 @@ impl<T: Table> Expr<T> {
     // -- splice expression ---------------------------------------------------
 
     /// Splice another expression's SQL and binds into the current position.
+    #[must_use]
     pub fn expr(mut self, e: impl EvalExpr) -> Self {
         self.0.push_eval(e);
         self
@@ -718,16 +806,21 @@ impl<T: Table> Expr<T> {
     // -- subqueries ----------------------------------------------------------
 
     /// Append `EXISTS (SELECT ...)`.
+    #[must_use]
     pub fn exists(self, q: SqlSelect) -> Self {
         self.raw("EXISTS ").select(q)
     }
 
     /// Append `NOT EXISTS (SELECT ...)`.
+    #[must_use]
     pub fn not_exists(self, q: SqlSelect) -> Self {
         self.raw("NOT EXISTS ").select(q)
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Append a parenthesised subquery: `(SELECT ...)`.
+    #[must_use]
     pub fn select(mut self, q: SqlSelect) -> Self {
         let uq = SqlBase::build(q).expect("subquery build failed");
         let (sub_sql, sub_binds) = uq.into_raw();
@@ -750,21 +843,25 @@ impl<T: Table> Expr<T> {
     }
 
     /// `ROW_NUMBER()` — sequential row number within partition.
+    #[must_use]
     pub fn row_number() -> Self {
         Self::new().raw("ROW_NUMBER()")
     }
 
     /// `RANK()` — rank with gaps for ties.
+    #[must_use]
     pub fn rank() -> Self {
         Self::new().raw("RANK()")
     }
 
     /// `DENSE_RANK()` — rank without gaps.
+    #[must_use]
     pub fn dense_rank() -> Self {
         Self::new().raw("DENSE_RANK()")
     }
 
     /// `NTILE(n)` — distribute rows into n buckets.
+    #[must_use]
     pub fn ntile(n: u32) -> Self {
         let mut e = Self::new();
         e.0.push("NTILE(");
@@ -774,26 +871,31 @@ impl<T: Table> Expr<T> {
     }
 
     /// `LAG(expr)` — value from previous row in partition.
+    #[must_use]
     pub fn lag(col: impl EvalExpr) -> Self {
         Self::window_fn("LAG", col)
     }
 
     /// `LEAD(expr)` — value from next row in partition.
+    #[must_use]
     pub fn lead(col: impl EvalExpr) -> Self {
         Self::window_fn("LEAD", col)
     }
 
     /// `FIRST_VALUE(expr)` — first value in window frame.
+    #[must_use]
     pub fn first_value(col: impl EvalExpr) -> Self {
         Self::window_fn("FIRST_VALUE", col)
     }
 
     /// `LAST_VALUE(expr)` — last value in window frame.
+    #[must_use]
     pub fn last_value(col: impl EvalExpr) -> Self {
         Self::window_fn("LAST_VALUE", col)
     }
 
     /// `NTH_VALUE(expr, n)` — nth value in window frame.
+    #[must_use]
     pub fn nth_value(col: impl EvalExpr, n: u32) -> Self {
         let mut e = Self::window_fn("NTH_VALUE", col);
         e.0.buf.pop(); // remove ')'
@@ -1218,12 +1320,22 @@ pub struct WindowSpec {
     frame: Option<(&'static str, FrameBound, FrameBound)>,
 }
 
+impl Default for WindowSpec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WindowSpec {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self { partition_by: Vec::new(), order_by: Vec::new(), binds: Vec::new(), frame: None }
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Add a PARTITION BY expression.
+    #[must_use]
     pub fn partition_by(mut self, col: impl EvalExpr) -> Self {
         let (sql, binds) = col.eval().unwrap();
         self.partition_by.push(sql);
@@ -1231,7 +1343,10 @@ impl WindowSpec {
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Add an ORDER BY expression with direction.
+    #[must_use]
     pub fn order_by(mut self, col: impl EvalExpr, order: SqlOrder) -> Self {
         let (mut sql, binds) = col.eval().unwrap();
         sql.push(' ');
@@ -1242,13 +1357,15 @@ impl WindowSpec {
     }
 
     /// Set the frame clause: `ROWS BETWEEN start AND end`.
-    pub fn rows_between(mut self, start: FrameBound, end: FrameBound) -> Self {
+    #[must_use]
+    pub const fn rows_between(mut self, start: FrameBound, end: FrameBound) -> Self {
         self.frame = Some(("ROWS", start, end));
         self
     }
 
     /// Set the frame clause: `RANGE BETWEEN start AND end`.
-    pub fn range_between(mut self, start: FrameBound, end: FrameBound) -> Self {
+    #[must_use]
+    pub const fn range_between(mut self, start: FrameBound, end: FrameBound) -> Self {
         self.frame = Some(("RANGE", start, end));
         self
     }
@@ -1288,7 +1405,7 @@ impl WindowSpec {
 // ---------------------------------------------------------------------------
 
 /// Sort direction for `ORDER BY` clauses.
-#[derive(strum::AsRefStr)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, strum::AsRefStr)]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum SqlOrder {
     Asc,

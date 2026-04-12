@@ -3,7 +3,9 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use sql_query::*;
+use sql_query::{
+    EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table, define_id,
+};
 use sqlx::FromRow;
 
 // -- Table definitions -------------------------------------------------------
@@ -78,10 +80,11 @@ fn run_bench(name: &str, iters: u64, f: impl Fn()) {
     }
     let start = Instant::now();
     for _ in 0..iters {
-        black_box(f());
+        f();
+        black_box(());
     }
     let elapsed = start.elapsed();
-    let per_iter = elapsed / iters as u32;
+    let per_iter = elapsed / u32::try_from(iters).unwrap_or(u32::MAX);
     println!("{name:.<50} {per_iter:>10.2?} / iter  ({iters} iters, {elapsed:.2?} total)");
 }
 
@@ -237,9 +240,7 @@ fn bench_complex_expr() {
 fn bench_raw_string_baseline() {
     // Hand-written equivalent of bench_select_full for comparison
     black_box({
-        let sql = format!(
-            r#"SELECT DISTINCT "users".name, "users".email, "users".age FROM "users" WHERE 1=1 AND "users".age >= $1 AND "users".name <> $2 AND "users".email ILIKE $3 ORDER BY "users".name ASC LIMIT $4 OFFSET $5"#
-        );
+        let sql = r#"SELECT DISTINCT "users".name, "users".email, "users".age FROM "users" WHERE 1=1 AND "users".age >= $1 AND "users".name <> $2 AND "users".email ILIKE $3 ORDER BY "users".name ASC LIMIT $4 OFFSET $5"#.to_string();
         let binds: Vec<SqlParam> = vec![
             SqlParam::I32(18),
             SqlParam::String("admin".into()),

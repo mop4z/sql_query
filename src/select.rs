@@ -17,6 +17,9 @@ pub struct SqlSelect {
     column_binds: Vec<SqlParam>,
     joined_tables: Vec<String>,
     join_binds: Vec<SqlParam>,
+    /// Static table names referenced by FROM, JOINs (incl. lateral subqueries),
+    /// and CTEs. Drives cache reverse-index population on `.cached()` reads.
+    tables: Vec<&'static str>,
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     having: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     group_by: Vec<String>,
@@ -43,6 +46,7 @@ impl SqlSelect {
             column_binds: Vec::new(),
             joined_tables: Vec::new(),
             join_binds: Vec::new(),
+            tables: vec![T::TABLE_NAME],
             filters: Vec::new(),
             having: Vec::new(),
             group_by: Vec::new(),
@@ -58,10 +62,19 @@ impl SqlSelect {
         }
     }
 
+    fn add_table(&mut self, t: &'static str) {
+        if !self.tables.contains(&t) {
+            self.tables.push(t);
+        }
+    }
+
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Set the SELECT column list. Omit to select `*`.
     ///
     /// Accepts column expressions — use `Col::col()`, `Col::count().alias("n")`,
     /// or `Expr::new().val(literal)` for computed columns.
+    #[must_use]
     pub fn from(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
             let (sql, binds) = c.eval().unwrap();
@@ -71,7 +84,10 @@ impl SqlSelect {
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Adds a JOIN clause: `{join} JOIN "T1" ON t1_col = t2_col`.
+    #[must_use]
     pub fn join<T1: Table, T2: Table>(
         mut self,
         sql_join: SqlJoin,
@@ -91,15 +107,19 @@ impl SqlSelect {
         self.joined_tables.push(s);
         self.join_binds.extend(t1_binds);
         self.join_binds.extend(t2_binds);
+        self.add_table(T1::TABLE_NAME);
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Adds a `{join} JOIN LATERAL (subquery) alias` clause. For non-CROSS
     /// join types the clause is followed by ` ON TRUE`; CROSS JOIN LATERAL
     /// takes no ON clause.
+    #[must_use]
     pub fn join_lateral(mut self, sql_join: SqlJoin, alias: &str, subquery: impl SqlBase) -> Self {
         let uq = subquery.build().expect("join_lateral build failed");
-        let (sub_sql, sub_binds) = uq.into_raw();
+        let (sub_sql, sub_binds, sub_tables) = uq.into_raw_with_tables();
         let mut s = String::with_capacity(sub_sql.len() + 32);
         s.push_str(sql_join.as_ref());
         s.push_str(" JOIN LATERAL (");
@@ -111,10 +131,16 @@ impl SqlSelect {
         }
         self.joined_tables.push(s);
         self.join_binds.extend(sub_binds);
+        for t in sub_tables {
+            self.add_table(t);
+        }
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Adds GROUP BY columns to the query.
+    #[must_use]
     pub fn group_by(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
         for c in columns {
             let (sql, binds) = c.eval().unwrap();
@@ -124,7 +150,10 @@ impl SqlSelect {
         self
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Appends an ORDER BY clause for the given column and direction.
+    #[must_use]
     pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
         let (mut sql, binds) = column.eval().unwrap();
         sql.push(' ');
@@ -135,75 +164,88 @@ impl SqlSelect {
     }
 
     /// Sets the maximum number of rows to return.
-    pub fn limit(mut self, n: u64) -> Self {
+    #[must_use] 
+    pub const fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self
     }
 
     /// Sets the number of rows to skip before returning results.
-    pub fn offset(mut self, n: u64) -> Self {
+    #[must_use] 
+    pub const fn offset(mut self, n: u64) -> Self {
         self.offset = Some(n);
         self
     }
 
     /// Enables SELECT DISTINCT to eliminate duplicate rows.
-    pub fn distinct(mut self) -> Self {
+    #[must_use] 
+    pub const fn distinct(mut self) -> Self {
         self.distinct = true;
         self
     }
 
     /// Wrap the entire query as `SELECT EXISTS (SELECT ...)`.
     /// The result is a single boolean — use `.bind_scalar::<bool>().fetch_one()`.
-    pub fn exists(mut self) -> Self {
+    #[must_use] 
+    pub const fn exists(mut self) -> Self {
         self.exists = true;
         self
     }
 
     /// Append `FOR UPDATE` — acquire row-level exclusive locks on selected rows.
-    pub fn for_update(mut self) -> Self {
+    #[must_use] 
+    pub const fn for_update(mut self) -> Self {
         self.for_update = true;
         self
     }
 
-    /// Adds WHERE conditions that are ANDed together.
+    /// Adds WHERE conditions that are `ANDed` together.
+    #[must_use]
     pub fn filter<E: EvalExpr>(mut self, filters: impl IntoIterator<Item = E>) -> Self {
-        self.filters.extend(filters.into_iter().map(|x| x.eval()));
+        self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
     /// Adds HAVING conditions applied after GROUP BY.
+    #[must_use]
     pub fn having<E: EvalExpr>(mut self, conditions: impl IntoIterator<Item = E>) -> Self {
-        self.having.extend(conditions.into_iter().map(|x| x.eval()));
+        self.having.extend(conditions.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
     /// Combine with another SELECT using `UNION` (deduplicates rows).
-    pub fn union(self, other: SqlSelect) -> SqlSetOp {
+    #[must_use] 
+    pub fn union(self, other: Self) -> SqlSetOp {
         SqlSetOp::new(self, other)
     }
 
     /// Combine with another SELECT using `UNION ALL` (keeps duplicates).
-    pub fn union_all(self, other: SqlSelect) -> SqlSetOp {
+    #[must_use] 
+    pub fn union_all(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_all(self, other)
     }
 
     /// Combine with another SELECT using `INTERSECT`.
-    pub fn intersect(self, other: SqlSelect) -> SqlSetOp {
+    #[must_use] 
+    pub fn intersect(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_intersect(self, other)
     }
 
     /// Combine with another SELECT using `INTERSECT ALL`.
-    pub fn intersect_all(self, other: SqlSelect) -> SqlSetOp {
+    #[must_use] 
+    pub fn intersect_all(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_intersect_all(self, other)
     }
 
     /// Combine with another SELECT using `EXCEPT`.
-    pub fn except(self, other: SqlSelect) -> SqlSetOp {
+    #[must_use] 
+    pub fn except(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_except(self, other)
     }
 
     /// Combine with another SELECT using `EXCEPT ALL`.
-    pub fn except_all(self, other: SqlSelect) -> SqlSetOp {
+    #[must_use] 
+    pub fn except_all(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_except_all(self, other)
     }
 }
@@ -235,7 +277,8 @@ impl SqlBase for SqlSelect {
         //   HAVING [having binds] ORDER BY [order_by binds] LIMIT [limit bind]
         let mut binds = self.column_binds;
         binds.extend(self.join_binds);
-        prepend_ctes(self.ctes, &mut sql, &mut binds);
+        let mut tables = self.tables;
+        prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
 
         if !self.group_by.is_empty() {
@@ -254,11 +297,11 @@ impl SqlBase for SqlSelect {
 
         if let Some(limit) = self.limit {
             sql.push_str(" LIMIT $#");
-            binds.push(SqlParam::I64(limit as i64));
+            binds.push(SqlParam::I64(i64::try_from(limit).unwrap_or(i64::MAX)));
         }
         if let Some(offset) = self.offset {
             sql.push_str(" OFFSET $#");
-            binds.push(SqlParam::I64(offset as i64));
+            binds.push(SqlParam::I64(i64::try_from(offset).unwrap_or(i64::MAX)));
         }
 
         if self.for_update {
@@ -269,7 +312,7 @@ impl SqlBase for SqlSelect {
             sql.push(')');
         }
 
-        Ok(UnbindedQuery { sql, binds })
+        Ok(UnbindedQuery { sql, binds, tables })
     }
 }
 

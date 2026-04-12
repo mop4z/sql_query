@@ -10,6 +10,7 @@ use sqlx::{
     postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo},
 };
 use uuid::Uuid;
+use xxhash_rust::xxh3::Xxh3;
 
 /// Marker trait for custom Postgres enums derived with `SqlParamEnum`.
 ///
@@ -87,22 +88,24 @@ pub enum SqlParam {
 }
 
 impl SqlParam {
-    pub fn is_null(&self) -> bool {
-        matches!(self, SqlParam::Null)
+    #[must_use]
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
     }
 
-    pub fn is_array(&self) -> bool {
+    #[must_use]
+    pub const fn is_array(&self) -> bool {
         matches!(
             self,
-            SqlParam::StringArray(_)
-                | SqlParam::I32Array(_)
-                | SqlParam::I64Array(_)
-                | SqlParam::F64Array(_)
-                | SqlParam::BoolArray(_)
-                | SqlParam::DecimalArray(_)
-                | SqlParam::DateTimeUtcArray(_)
-                | SqlParam::UuidArray(_)
-                | SqlParam::CustomArray(_)
+            Self::StringArray(_)
+                | Self::I32Array(_)
+                | Self::I64Array(_)
+                | Self::F64Array(_)
+                | Self::BoolArray(_)
+                | Self::DecimalArray(_)
+                | Self::DateTimeUtcArray(_)
+                | Self::UuidArray(_)
+                | Self::CustomArray(_)
         )
     }
 
@@ -116,12 +119,136 @@ impl SqlParam {
             + fmt::Debug
             + 'static,
     {
-        SqlParam::Custom(Box::new(val))
+        Self::Custom(Box::new(val))
     }
 
+    /// # Panics
+    /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Serializes any `Serialize` value to `SqlParam::Json`.
     pub fn json<T: serde::Serialize>(val: T) -> Self {
-        SqlParam::Json(serde_json::to_value(val).expect("json serialization failed"))
+        Self::Json(serde_json::to_value(val).expect("json serialization failed"))
+    }
+
+    /// Feeds a stable byte representation of this bind into the given streaming
+    /// xxh3 hasher. Used by the cache layer to derive a query cache key in one
+    /// pass without intermediate string allocations.
+    ///
+    /// Each variant writes a one-byte discriminant followed by raw payload bytes
+    /// (for primitives) or length-prefixed payloads (for variable-sized
+    /// variants). `Custom` and `Json` fall back to debug formatting via a
+    /// scratch buffer because they have no canonical raw byte form.
+    #[allow(clippy::too_many_lines)] // one fast switch over all variants
+    pub(crate) fn hash_into(&self, h: &mut Xxh3, scratch: &mut String) {
+        // Discriminant tags — keep stable; changing them invalidates existing
+        // cache entries.
+        match self {
+            Self::Null => h.update(&[0]),
+            Self::Bool(v) => {
+                h.update(&[1, u8::from(*v)]);
+            }
+            Self::I16(v) => {
+                h.update(&[2]);
+                h.update(&v.to_le_bytes());
+            }
+            Self::I32(v) => {
+                h.update(&[3]);
+                h.update(&v.to_le_bytes());
+            }
+            Self::I64(v) => {
+                h.update(&[4]);
+                h.update(&v.to_le_bytes());
+            }
+            Self::F64(v) => {
+                h.update(&[5]);
+                h.update(&v.to_bits().to_le_bytes());
+            }
+            Self::String(v) => {
+                h.update(&[6]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                h.update(v.as_bytes());
+            }
+            Self::Uuid(v) => {
+                h.update(&[7]);
+                h.update(v.as_bytes());
+            }
+            Self::DateTimeUtc(v) => {
+                h.update(&[8]);
+                h.update(&v.timestamp().to_le_bytes());
+                h.update(&v.timestamp_subsec_nanos().to_le_bytes());
+            }
+            Self::Decimal(v) => {
+                h.update(&[9]);
+                h.update(&v.serialize());
+            }
+            Self::I32Array(v) => {
+                h.update(&[10]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for x in v {
+                    h.update(&x.to_le_bytes());
+                }
+            }
+            Self::I64Array(v) => {
+                h.update(&[11]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for x in v {
+                    h.update(&x.to_le_bytes());
+                }
+            }
+            Self::F64Array(v) => {
+                h.update(&[12]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for x in v {
+                    h.update(&x.to_bits().to_le_bytes());
+                }
+            }
+            Self::BoolArray(v) => {
+                h.update(&[13]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for x in v {
+                    h.update(&[u8::from(*x)]);
+                }
+            }
+            Self::StringArray(v) => {
+                h.update(&[14]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for s in v {
+                    h.update(&(s.len() as u64).to_le_bytes());
+                    h.update(s.as_bytes());
+                }
+            }
+            Self::UuidArray(v) => {
+                h.update(&[15]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for u in v {
+                    h.update(u.as_bytes());
+                }
+            }
+            Self::DateTimeUtcArray(v) => {
+                h.update(&[16]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for d in v {
+                    h.update(&d.timestamp().to_le_bytes());
+                    h.update(&d.timestamp_subsec_nanos().to_le_bytes());
+                }
+            }
+            Self::DecimalArray(v) => {
+                h.update(&[17]);
+                h.update(&(v.len() as u64).to_le_bytes());
+                for d in v {
+                    h.update(&d.serialize());
+                }
+            }
+            // Json + Custom: no canonical byte form. Fall back to debug
+            // formatting through the caller's reusable scratch buffer.
+            Self::Json(_) | Self::Custom(_) | Self::CustomArray(_) => {
+                use std::fmt::Write;
+                h.update(&[18]);
+                scratch.clear();
+                let _ = write!(scratch, "{self:?}");
+                h.update(&(scratch.len() as u64).to_le_bytes());
+                h.update(scratch.as_bytes());
+            }
+        }
     }
 }
 
@@ -146,8 +273,7 @@ impl fmt::Debug for SqlParam {
             Self::DecimalArray(v) => f.debug_tuple("DecimalArray").field(v).finish(),
             Self::DateTimeUtcArray(v) => f.debug_tuple("DateTimeUtcArray").field(v).finish(),
             Self::UuidArray(v) => f.debug_tuple("UuidArray").field(v).finish(),
-            Self::Custom(v) => v.debug_fmt(f),
-            Self::CustomArray(v) => v.debug_fmt(f),
+            Self::Custom(v) | Self::CustomArray(v) => v.debug_fmt(f),
             Self::Null => write!(f, "Null"),
         }
     }
@@ -251,13 +377,13 @@ impl_sql_param_from! {
 
 impl From<&str> for SqlParam {
     fn from(value: &str) -> Self {
-        SqlParam::String(value.to_string())
+        Self::String(value.to_string())
     }
 }
 
 impl From<Vec<&str>> for SqlParam {
     fn from(value: Vec<&str>) -> Self {
-        SqlParam::StringArray(value.into_iter().map(String::from).collect())
+        Self::StringArray(value.into_iter().map(String::from).collect())
     }
 }
 
@@ -285,27 +411,22 @@ impl_sql_param_from_ref_vec! {
 
 impl From<NaiveDate> for SqlParam {
     fn from(value: NaiveDate) -> Self {
-        SqlParam::DateTimeUtc(
-            value.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc(),
-        )
+        Self::DateTimeUtc(value.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc())
     }
 }
 
 impl<T> From<Option<T>> for SqlParam
 where
-    SqlParam: From<T>,
+    Self: From<T>,
 {
     fn from(value: Option<T>) -> Self {
-        match value {
-            Some(v) => v.into(),
-            None => SqlParam::Null,
-        }
+        value.map_or(Self::Null, Into::into)
     }
 }
 
 impl<T: SqlEnum> From<Vec<T>> for SqlParam {
     fn from(value: Vec<T>) -> Self {
-        SqlParam::CustomArray(Box::new(value))
+        Self::CustomArray(Box::new(value))
     }
 }
 
@@ -327,11 +448,11 @@ macro_rules! type_info_dispatch {
     };
 }
 
-impl<'q> Encode<'q, Postgres> for SqlParam {
+impl Encode<'_, Postgres> for SqlParam {
     fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
         match self {
-            SqlParam::Custom(v) | SqlParam::CustomArray(v) => v.encode_param(buf),
-            SqlParam::Null => Ok(IsNull::Yes),
+            Self::Custom(v) | Self::CustomArray(v) => v.encode_param(buf),
+            Self::Null => Ok(IsNull::Yes),
             other => {
                 encode_dispatch!(other, buf, encode_by_ref;
                     String(String), I16(i16), I32(i32), I64(i64), F64(f64), Bool(bool),
@@ -347,8 +468,8 @@ impl<'q> Encode<'q, Postgres> for SqlParam {
 
     fn produces(&self) -> Option<<Postgres as Database>::TypeInfo> {
         match self {
-            SqlParam::Custom(v) | SqlParam::CustomArray(v) => Some(v.type_info_param()),
-            SqlParam::Null => Some(<() as Type<Postgres>>::type_info()),
+            Self::Custom(v) | Self::CustomArray(v) => Some(v.type_info_param()),
+            Self::Null => Some(<() as Type<Postgres>>::type_info()),
             other => Some(type_info_dispatch!(other;
                 String(String), I16(i16), I32(i32), I64(i64), F64(f64), Bool(bool),
                 Decimal(Decimal), Json(Value), DateTimeUtc(DateTime<Utc>),
