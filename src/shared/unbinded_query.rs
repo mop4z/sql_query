@@ -420,8 +420,10 @@ where
         let sql = self.sql;
         let binds = self.binds;
         let tables = self.tables;
-        cached::with_cache(&key, self.ttl, &tables, redis, || run_query_as(&sql, binds, executor))
-            .await
+        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
+            run_query_as(&sql, binds, executor)
+        })
+        .await
     }
 
     /// # Errors
@@ -435,7 +437,7 @@ where
         let sql = self.sql;
         let binds = self.binds;
         let tables = self.tables;
-        cached::with_cache(&key, self.ttl, &tables, redis, || {
+        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
             run_query_as_one(&sql, binds, executor)
         })
         .await
@@ -452,7 +454,7 @@ where
         let sql = self.sql;
         let binds = self.binds;
         let tables = self.tables;
-        cached::with_cache(&key, self.ttl, &tables, redis, || {
+        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
             run_query_as_optional(&sql, binds, executor)
         })
         .await
@@ -530,8 +532,10 @@ where
         let sql = self.sql;
         let binds = self.binds;
         let tables = self.tables;
-        cached::with_cache(&key, self.ttl, &tables, redis, || run_scalar_one(&sql, binds, executor))
-            .await
+        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
+            run_scalar_one(&sql, binds, executor)
+        })
+        .await
     }
 
     /// # Errors
@@ -545,7 +549,7 @@ where
         let sql = self.sql;
         let binds = self.binds;
         let tables = self.tables;
-        cached::with_cache(&key, self.ttl, &tables, redis, || {
+        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
             run_scalar_optional(&sql, binds, executor)
         })
         .await
@@ -562,8 +566,10 @@ where
         let sql = self.sql;
         let binds = self.binds;
         let tables = self.tables;
-        cached::with_cache(&key, self.ttl, &tables, redis, || run_scalar(&sql, binds, executor))
-            .await
+        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
+            run_scalar(&sql, binds, executor)
+        })
+        .await
     }
 }
 

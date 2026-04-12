@@ -43,6 +43,7 @@ fn table_key(table: &str) -> String {
 /// so a later `invalidate_tables` can sweep it.
 pub async fn with_cache<T, F, Fut>(
     key: &str,
+    sql: &str,
     ttl: u64,
     tables: &[&'static str],
     redis: &mut redis::aio::MultiplexedConnection,
@@ -56,11 +57,11 @@ where
     if let Ok(Some(hit)) = redis.get::<&str, Option<String>>(key).await
         && let Ok(val) = serde_json::from_str(&hit)
     {
-        tracing::debug!("HIT {key}");
+        tracing::debug!("HIT {key} {sql}");
         return Ok(val);
     }
 
-    tracing::debug!("MISS {key}");
+    tracing::debug!("MISS {key} {sql}");
     let result = fetch().await?;
 
     if let Ok(json) = serde_json::to_string(&result) {
