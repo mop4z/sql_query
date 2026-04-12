@@ -51,25 +51,25 @@ pub struct SqlWith {
 
 impl SqlWith {
     /// `WITH ... SELECT * FROM "T"`.
-    #[must_use] 
+    #[must_use]
     pub fn select<T: Table>(self) -> SqlSelect {
         SqlSelect::new_with::<T>(self.ctes)
     }
 
     /// `WITH ... DELETE FROM "T"`.
-    #[must_use] 
+    #[must_use]
     pub fn delete<T: Table>(self) -> SqlDelete<T> {
         SqlDelete::new_with(self.ctes)
     }
 
     /// `WITH ... INSERT INTO "T"`.
-    #[must_use] 
+    #[must_use]
     pub fn insert<T: Table>(self) -> SqlInsert<T> {
         SqlInsert::new_with(self.ctes)
     }
 
     /// `WITH ... UPDATE "T"`.
-    #[must_use] 
+    #[must_use]
     pub fn update<T: Table>(self) -> SqlUpdate {
         SqlUpdate::new_with::<T>(self.ctes)
     }
@@ -93,7 +93,7 @@ pub struct SqlQ;
 
 impl SqlQ {
     /// Start a `SELECT * FROM "T"` builder.
-    #[must_use] 
+    #[must_use]
     pub fn select<T: Table>() -> SqlSelect {
         SqlSelect::new::<T>()
     }
@@ -111,7 +111,7 @@ impl SqlQ {
     }
 
     /// Start an `UPDATE "T"` builder.
-    #[must_use] 
+    #[must_use]
     pub fn update<T: Table>() -> SqlUpdate {
         SqlUpdate::new::<T>()
     }
