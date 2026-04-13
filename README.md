@@ -529,3 +529,71 @@ CurrencyCol::CurrencyType.eq(CurrencyType::Fiat)
 | `Option<T>` | Inner variant or `Null` |
 | `NaiveDate` | `DateTimeUtc` (midnight) |
 | `#[derive(SqlParamEnum)]` | `Custom` |
+
+## Cache Tags
+
+Define table groups for cache invalidation using the `CacheTag` trait:
+
+```rust
+use sql_query::CacheTag;
+
+enum MyTags {
+    UserBalance,
+    Pricing,
+}
+
+impl CacheTag for MyTags {
+    fn tables(&self) -> &[&'static str] {
+        match self {
+            Self::UserBalance => &["users", "balances", "transactions"],
+            Self::Pricing => &["products", "discounts"],
+        }
+    }
+}
+```
+
+Use `.tag()` on cached reads and invalidating writes to attach extra tables:
+
+```rust
+// Cached read — entry is swept when any tagged table is invalidated
+SqlQ::select::<Users>()
+    .build()?
+    .bind_as::<Users>()
+    .cached(60)
+    .tag(MyTags::UserBalance)
+    .fetch_all(pool, redis).await?;
+
+// Write — invalidates the query's own tables plus all tagged tables
+SqlQ::update::<Users>()
+    .set([UC::Name.eq("alice")])
+    .filter([UC::Id.eq(id)])
+    .build()?
+    .bind()
+    .tag(MyTags::UserBalance)
+    .execute(pool, redis).await?;
+```
+
+## Write Invalidation
+
+INSERT, UPDATE, and DELETE queries invalidate cache by default. All write
+builders return `UnbindedWriteQuery`, whose `.bind()` and `.bind_as::<T>()`
+produce invalidating types that require a Redis connection.
+
+Use `.skip_inval()` to opt out when cache invalidation is not needed:
+
+```rust
+// Default: invalidates (requires redis)
+SqlQ::insert::<Users>()
+    .values([UC::Name.eq("alice")])?
+    .build()?
+    .bind()
+    .execute(&pool, &mut redis).await?;
+
+// Opt out: no invalidation (no redis needed)
+SqlQ::insert::<Users>()
+    .values([UC::Name.eq("alice")])?
+    .build()?
+    .bind()
+    .skip_inval()
+    .execute(&pool).await?;
+```
