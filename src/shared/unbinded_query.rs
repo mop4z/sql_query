@@ -436,7 +436,7 @@ where
     /// Merges additional tables from a `CacheTag` into this query's
     /// cache registration list.
     #[must_use]
-    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+    pub fn tag(mut self, tag: &impl cached::CacheTag) -> Self {
         for t in tag.tables() {
             if !self.tables.contains(t) {
                 self.tables.push(t);
@@ -560,7 +560,7 @@ where
     /// Merges additional tables from a `CacheTag` into this query's
     /// cache registration list.
     #[must_use]
-    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+    pub fn tag(mut self, tag: &impl cached::CacheTag) -> Self {
         for t in tag.tables() {
             if !self.tables.contains(t) {
                 self.tables.push(t);
@@ -636,7 +636,7 @@ impl InvalidatingBoundQuery {
     /// Merges additional tables from a `CacheTag` into this query's
     /// invalidation list.
     #[must_use]
-    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+    pub fn tag(mut self, tag: &impl cached::CacheTag) -> Self {
         for t in tag.tables() {
             if !self.tables.contains(t) {
                 self.tables.push(t);
@@ -678,7 +678,7 @@ impl<T> InvalidatingBoundQueryAs<T> {
     /// Merges additional tables from a `CacheTag` into this query's
     /// invalidation list.
     #[must_use]
-    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+    pub fn tag(mut self, tag: &impl cached::CacheTag) -> Self {
         for t in tag.tables() {
             if !self.tables.contains(t) {
                 self.tables.push(t);
