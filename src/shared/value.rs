@@ -409,6 +409,12 @@ impl_sql_param_from_ref_vec! {
     Uuid => UuidArray,
 }
 
+impl<T: crate::Id> From<&[T]> for SqlParam {
+    fn from(value: &[T]) -> Self {
+        Self::UuidArray(value.iter().map(|id| id.raw()).collect())
+    }
+}
+
 impl From<NaiveDate> for SqlParam {
     fn from(value: NaiveDate) -> Self {
         Self::DateTimeUtc(value.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc())

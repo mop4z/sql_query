@@ -124,11 +124,9 @@ impl SqlUpdate {
                 .unwrap_or(false)
         })
     }
-}
 
-impl SqlUpdate {
     /// # Errors
-    /// Returns `sqlx::Error` if any SET or WHERE expression fails to evaluate.
+    /// Returns `sqlx::Error::Protocol` if any SET or filter expression fails to compose.
     pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error> {
         let mut sql = String::with_capacity(128);
         sql.push_str("UPDATE \"");
