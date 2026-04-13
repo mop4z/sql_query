@@ -4,7 +4,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use sql_query::{
-    EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table, define_id,
+    EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table,
+    UnbindedWriteQuery, define_id,
 };
 use sqlx::FromRow;
 
@@ -71,6 +72,10 @@ type UExpr = Expr<Users>;
 
 fn build_to_sql(q: impl SqlBase) -> (String, Vec<SqlParam>) {
     q.build().unwrap().into_raw()
+}
+
+fn write_to_sql(q: UnbindedWriteQuery) -> (String, Vec<SqlParam>) {
+    q.into_raw()
 }
 
 fn run_bench(name: &str, iters: u64, f: impl Fn()) {
@@ -165,19 +170,21 @@ fn bench_select_with_cte() {
 }
 
 fn bench_insert_single() {
-    black_box(build_to_sql(
+    black_box(write_to_sql(
         SqlQ::insert::<Users>()
             .values([
                 UsersCol::Name.eq("alice"),
                 UsersCol::Email.eq("alice@example.com"),
                 UsersCol::Age.eq(30i32),
             ])
+            .unwrap()
+            .build()
             .unwrap(),
     ));
 }
 
 fn bench_insert_batch() {
-    black_box(build_to_sql(
+    black_box(write_to_sql(
         SqlQ::insert::<Users>()
             .values_nested([
                 vec![
@@ -206,21 +213,28 @@ fn bench_insert_batch() {
                     UsersCol::Age.eq(22i32),
                 ],
             ])
+            .unwrap()
+            .build()
             .unwrap(),
     ));
 }
 
 fn bench_update_with_filter() {
-    black_box(build_to_sql(
+    black_box(write_to_sql(
         SqlQ::update::<Users>()
             .set([UsersCol::Name.eq("bob"), UsersCol::Age.eq(31i32)])
-            .filter([UsersCol::Email.eq("bob@example.com")]),
+            .filter([UsersCol::Email.eq("bob@example.com")])
+            .build()
+            .unwrap(),
     ));
 }
 
 fn bench_delete_with_filter() {
-    black_box(build_to_sql(
-        SqlQ::delete::<Users>().filter([UsersCol::Name.eq("alice"), UsersCol::Age.lt(18i32)]),
+    black_box(write_to_sql(
+        SqlQ::delete::<Users>()
+            .filter([UsersCol::Name.eq("alice"), UsersCol::Age.lt(18i32)])
+            .build()
+            .unwrap(),
     ));
 }
 
