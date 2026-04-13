@@ -2,10 +2,11 @@ use crate::{
     SqlBase,
     select::SqlSelect,
     shared::{
-        Cte, Returning, SqlConflict, Table, UnbindedQuery,
+        Cte, Returning, SqlConflict, Table,
         error::SqlQueryError,
         expr::{EvalExpr, Expr},
         prepend_ctes, push_returning,
+        unbinded_query::UnbindedWriteQuery,
         value::SqlParam,
     },
 };
@@ -160,10 +161,10 @@ impl<T: Table> SqlInsert<T> {
         self.include_nulls = true;
         self
     }
-}
 
-impl<T: Table> SqlBase for SqlInsert<T> {
-    fn build(mut self) -> Result<UnbindedQuery, sqlx::Error> {
+    /// # Errors
+    /// Returns `sqlx::Error::Protocol` if any value expression fails to compose.
+    pub fn build(mut self) -> Result<UnbindedWriteQuery, sqlx::Error> {
         if !self.include_nulls && self.select_source.is_none() && !self.rows.is_empty() {
             drop_null_only_columns(&mut self.columns, &mut self.rows);
         }
@@ -234,7 +235,7 @@ impl<T: Table> SqlBase for SqlInsert<T> {
         }
 
         push_returning(self.returning, &mut sql);
-        Ok(UnbindedQuery { sql, binds, tables })
+        Ok(UnbindedWriteQuery { sql, binds, tables })
     }
 }
 
@@ -312,8 +313,7 @@ mod tests {
     }
 
     fn build(insert: SqlInsert<Users>) -> (String, Vec<SqlParam>) {
-        let uq = SqlBase::build(insert).unwrap();
-        let bq = uq.bind();
+        let bq = insert.build().unwrap().bind().skip_inval();
         (bq.sql, bq.binds)
     }
 

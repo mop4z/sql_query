@@ -137,7 +137,8 @@ impl SqlQ {
         Ok(Self::delete::<T>()
             .filter([Expr::<T>::new().column(T::Col::id()).eq(id)])
             .build()?
-            .bind())
+            .bind()
+            .skip_inval())
     }
 
     /// # Panics
