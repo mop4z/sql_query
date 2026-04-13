@@ -130,15 +130,14 @@ impl SqlQ {
 
     /// # Errors
     /// Propagates `sqlx::Error` from the underlying database call.
-    pub fn delete_one_id<T: Table>(id: T::Id) -> Result<BoundQuery, sqlx::Error>
+    pub fn delete_one_id<T: Table>(id: T::Id) -> Result<InvalidatingBoundQuery, sqlx::Error>
     where
         T::Col: SqlColId,
     {
         Ok(Self::delete::<T>()
             .filter([Expr::<T>::new().column(T::Col::id()).eq(id)])
             .build()?
-            .bind()
-            .skip_inval())
+            .bind())
     }
 
     /// # Panics
