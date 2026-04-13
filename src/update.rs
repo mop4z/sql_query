@@ -1,11 +1,10 @@
 #[cfg(test)]
 use crate::shared::expr::Expr;
-use crate::{
-    SqlBase,
-    shared::{
-        Cte, Returning, Table, UnbindedQuery, error::SqlQueryError, expr::EvalExpr, prepend_ctes,
-        push_conditions, push_returning, value::SqlParam,
-    },
+use crate::shared::{
+    Cte, Returning, Table, error::SqlQueryError, expr::EvalExpr, prepend_ctes, push_conditions,
+    push_returning,
+    unbinded_query::UnbindedWriteQuery,
+    value::SqlParam,
 };
 
 /// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.
@@ -70,7 +69,7 @@ impl SqlUpdate {
     /// Add a `FROM (subquery) alias` clause for referencing a subquery in SET/WHERE.
     #[must_use]
     #[allow(clippy::wrong_self_convention)]
-    pub fn from_subquery(mut self, alias: &str, query: impl SqlBase) -> Self {
+    pub fn from_subquery(mut self, alias: &str, query: impl crate::SqlBase) -> Self {
         let uq = query.build().expect("from_subquery build failed");
         let (sub_sql, sub_binds, sub_tables) = uq.into_raw_with_tables();
         let mut s = String::with_capacity(sub_sql.len() + alias.len() + 4);
@@ -127,8 +126,10 @@ impl SqlUpdate {
     }
 }
 
-impl SqlBase for SqlUpdate {
-    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+impl SqlUpdate {
+    /// # Errors
+    /// Returns `sqlx::Error` if any SET or WHERE expression fails to evaluate.
+    pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error> {
         let mut sql = String::with_capacity(128);
         sql.push_str("UPDATE \"");
         sql.push_str(self.table);
@@ -168,7 +169,7 @@ impl SqlBase for SqlUpdate {
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
         push_returning(self.returning, &mut sql);
 
-        Ok(UnbindedQuery { sql, binds, tables })
+        Ok(UnbindedWriteQuery { sql, binds, tables })
     }
 }
 
@@ -215,8 +216,7 @@ mod tests {
     type PExpr = Expr<Posts>;
 
     fn build(update: SqlUpdate) -> (String, Vec<SqlParam>) {
-        let uq = SqlBase::build(update).unwrap();
-        let bq = uq.bind();
+        let bq = update.build().unwrap().bind().skip_inval();
         (bq.sql, bq.binds)
     }
 

@@ -1,14 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::{
-    SqlBase,
-    shared::{
-        Cte, Returning, Table, UnbindedQuery,
-        error::SqlQueryError,
-        expr::{EvalExpr, Expr},
-        prepend_ctes, push_conditions, push_returning,
-        value::SqlParam,
-    },
+use crate::shared::{
+    Cte, Returning, Table,
+    error::SqlQueryError,
+    expr::{EvalExpr, Expr},
+    prepend_ctes, push_conditions, push_returning,
+    unbinded_query::UnbindedWriteQuery,
+    value::SqlParam,
 };
 
 /// Builder for SQL DELETE statements with filters and optional RETURNING clause.
@@ -81,10 +79,10 @@ impl<T: Table> SqlDelete<T> {
         self.returning = Returning::None;
         self
     }
-}
 
-impl<T: Table> SqlBase for SqlDelete<T> {
-    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+    /// # Errors
+    /// Returns `sqlx::Error::Protocol` if neither `.filter()` nor `.delete_all()` was called.
+    pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error> {
         if self.filters.is_empty() && !self.delete_all {
             return Err(sqlx::Error::Protocol(
                 SqlQueryError::DeleteRequiresFilterOrDeleteAll.to_string(),
@@ -115,7 +113,7 @@ impl<T: Table> SqlBase for SqlDelete<T> {
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
         push_returning(self.returning, &mut sql);
 
-        Ok(UnbindedQuery { sql, binds, tables })
+        Ok(UnbindedWriteQuery { sql, binds, tables })
     }
 }
 
@@ -145,8 +143,7 @@ mod tests {
     type UExpr = Expr<Users>;
 
     fn build(delete: SqlDelete<Users>) -> (String, Vec<SqlParam>) {
-        let uq = SqlBase::build(delete).unwrap();
-        let bq = uq.bind();
+        let bq = delete.build().unwrap().bind().skip_inval();
         (bq.sql, bq.binds)
     }
 
@@ -159,7 +156,7 @@ mod tests {
 
     #[test]
     fn delete_without_filter_or_delete_all_fails() {
-        let result = SqlBase::build(SqlDelete::<Users>::new());
+        let result = SqlDelete::<Users>::new().build();
         assert!(result.is_err());
     }
 
