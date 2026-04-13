@@ -7,6 +7,24 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::shared::value::SqlParam;
 
+/// Trait for grouping related tables under a single tag.
+/// Implement on an enum to define table groups for cache invalidation.
+///
+/// ```ignore
+/// enum MyTags { UserBalance, Pricing }
+/// impl CacheTag for MyTags {
+///     fn tables(&self) -> &[&'static str] {
+///         match self {
+///             Self::UserBalance => &["users", "balances", "transactions"],
+///             Self::Pricing => &["products", "discounts"],
+///         }
+///     }
+/// }
+/// ```
+pub trait CacheTag {
+    fn tables(&self) -> &[&'static str];
+}
+
 /// Computes a Redis entry key from the SQL string and bind parameters.
 /// Format: `sq:e:{xxh3_hex}`. Stable across runs for the same SQL+binds.
 ///
