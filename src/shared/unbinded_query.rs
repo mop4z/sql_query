@@ -253,6 +253,42 @@ impl UnbindedQuery {
 }
 
 // ---------------------------------------------------------------------------
+// UnbindedWriteQuery
+// ---------------------------------------------------------------------------
+
+/// A write query (INSERT/UPDATE/DELETE) whose placeholders have not yet been
+/// renumbered. Like `UnbindedQuery` but `.bind()` produces invalidating types
+/// by default.
+pub struct UnbindedWriteQuery {
+    pub(crate) sql: String,
+    pub(crate) binds: Vec<SqlParam>,
+    pub(crate) tables: Vec<&'static str>,
+}
+
+impl UnbindedWriteQuery {
+    #[must_use]
+    pub fn into_raw(self) -> (String, Vec<SqlParam>) {
+        (self.sql, self.binds)
+    }
+
+    pub(crate) fn into_raw_with_tables(self) -> (String, Vec<SqlParam>, Vec<&'static str>) {
+        (self.sql, self.binds, self.tables)
+    }
+
+    #[must_use]
+    pub fn bind(self) -> InvalidatingBoundQuery {
+        let sql = renumber_placeholders(&self.sql);
+        InvalidatingBoundQuery { sql, binds: self.binds, tables: self.tables }
+    }
+
+    #[must_use]
+    pub fn bind_as<T>(self) -> InvalidatingBoundQueryAs<T> {
+        let sql = renumber_placeholders(&self.sql);
+        InvalidatingBoundQueryAs { sql, binds: self.binds, tables: self.tables, _t: PhantomData }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BoundQuery (no caching — raw rows aren't serializable)
 // ---------------------------------------------------------------------------
 
@@ -409,6 +445,18 @@ impl<T> CachedBoundQueryAs<T>
 where
     T: for<'r> FromRow<'r, PgRow> + Send + Unpin + Serialize + DeserializeOwned,
 {
+    /// Merges additional tables from a `CacheTag` into this query's
+    /// cache registration list.
+    #[must_use]
+    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+        for t in tag.tables() {
+            if !self.tables.contains(t) {
+                self.tables.push(t);
+            }
+        }
+        self
+    }
+
     /// # Errors
     /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
@@ -521,6 +569,18 @@ where
     (T,): for<'r> FromRow<'r, PgRow>,
     T: Send + Unpin + Serialize + DeserializeOwned,
 {
+    /// Merges additional tables from a `CacheTag` into this query's
+    /// cache registration list.
+    #[must_use]
+    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+        for t in tag.tables() {
+            if !self.tables.contains(t) {
+                self.tables.push(t);
+            }
+        }
+        self
+    }
+
     /// # Errors
     /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_one<'e>(
@@ -591,6 +651,25 @@ impl BoundQuery {
 // ---------------------------------------------------------------------------
 
 impl InvalidatingBoundQuery {
+    /// Opts out of cache invalidation, returning a plain `BoundQuery`
+    /// that does not require a Redis connection.
+    #[must_use]
+    pub fn skip_inval(self) -> BoundQuery {
+        BoundQuery { sql: self.sql, binds: self.binds, tables: self.tables }
+    }
+
+    /// Merges additional tables from a `CacheTag` into this query's
+    /// invalidation list.
+    #[must_use]
+    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+        for t in tag.tables() {
+            if !self.tables.contains(t) {
+                self.tables.push(t);
+            }
+        }
+        self
+    }
+
     /// # Errors
     /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn execute<'e>(
@@ -612,6 +691,27 @@ impl InvalidatingBoundQuery {
 // ---------------------------------------------------------------------------
 // InvalidatingBoundQueryAs<T>
 // ---------------------------------------------------------------------------
+
+impl<T> InvalidatingBoundQueryAs<T> {
+    /// Opts out of cache invalidation, returning a plain `BoundQueryAs<T>`
+    /// that does not require a Redis connection.
+    #[must_use]
+    pub fn skip_inval(self) -> BoundQueryAs<T> {
+        BoundQueryAs { sql: self.sql, binds: self.binds, tables: self.tables, _t: PhantomData }
+    }
+
+    /// Merges additional tables from a `CacheTag` into this query's
+    /// invalidation list.
+    #[must_use]
+    pub fn tag(mut self, tag: impl cached::CacheTag) -> Self {
+        for t in tag.tables() {
+            if !self.tables.contains(t) {
+                self.tables.push(t);
+            }
+        }
+        self
+    }
+}
 
 impl<T> InvalidatingBoundQueryAs<T>
 where

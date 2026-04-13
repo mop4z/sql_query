@@ -22,7 +22,7 @@ pub use shared::{
     expr::{ColOps, EvalExpr, Expr, FrameBound, SqlJoin, SqlOrder, WindowSpec},
     unbinded_query::{
         BoundQuery, BoundQueryAs, BoundQueryScalar, CachedBoundQueryAs, CachedBoundQueryScalar,
-        InvalidatingBoundQuery, InvalidatingBoundQueryAs, UnbindedQuery,
+        InvalidatingBoundQuery, InvalidatingBoundQueryAs, UnbindedQuery, UnbindedWriteQuery,
     },
     value::{SqlEnum, SqlParam},
 };
