@@ -17,7 +17,7 @@ pub use select::SqlSelect;
 pub use set_op::SqlSetOp;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
-    cached::{cache_key, invalidate_tables},
+    cached::{CacheTag, cache_key, invalidate_tables},
     error::SqlQueryError,
     expr::{ColOps, EvalExpr, Expr, FrameBound, SqlJoin, SqlOrder, WindowSpec},
     unbinded_query::{
