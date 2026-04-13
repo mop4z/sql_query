@@ -366,18 +366,6 @@ impl<T> BoundQueryAs<T> {
             _t: PhantomData,
         }
     }
-
-    /// Returns an `InvalidatingBoundQueryAs` that wipes any cached entries
-    /// tagged with this query's tables after the write succeeds.
-    #[must_use]
-    pub fn invalidate(self) -> InvalidatingBoundQueryAs<T> {
-        InvalidatingBoundQueryAs {
-            sql: self.sql,
-            binds: self.binds,
-            tables: self.tables,
-            _t: PhantomData,
-        }
-    }
 }
 
 impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
@@ -630,19 +618,6 @@ where
             run_scalar(&sql, binds, executor)
         })
         .await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BoundQuery — invalidate hook
-// ---------------------------------------------------------------------------
-
-impl BoundQuery {
-    /// Returns an `InvalidatingBoundQuery` that wipes any cached entries
-    /// tagged with this query's tables after the write succeeds.
-    #[must_use]
-    pub fn invalidate(self) -> InvalidatingBoundQuery {
-        InvalidatingBoundQuery { sql: self.sql, binds: self.binds, tables: self.tables }
     }
 }
 
