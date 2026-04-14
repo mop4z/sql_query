@@ -118,14 +118,15 @@ impl SqlQ {
 
     /// # Errors
     /// Propagates `sqlx::Error` from the underlying database call.
-    pub fn select_one_id<T: Table>(id: T::Id) -> Result<BoundQueryAs<T>, sqlx::Error>
+    pub fn select_one_id<T: Table>(id: T::Id) -> Result<CachedBoundQueryAs<T>, sqlx::Error>
     where
         T::Col: SqlColId,
     {
         Ok(Self::select::<T>()
             .filter([Expr::<T>::new().column(T::Col::id()).eq(id)])
             .build()?
-            .bind_as::<T>())
+            .bind_as::<T>()
+            .cached(600))
     }
 
     /// # Errors

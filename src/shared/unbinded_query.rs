@@ -445,6 +445,11 @@ where
         self
     }
 
+    pub fn ttl(mut self, ttl: u64) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
     /// # Errors
     /// Propagates `sqlx::Error` from the underlying database call.
     pub async fn fetch_all<'e>(
@@ -566,6 +571,11 @@ where
                 self.tables.push(t);
             }
         }
+        self
+    }
+
+    pub fn ttl(mut self, ttl: u64) -> Self {
+        self.ttl = ttl;
         self
     }
 
