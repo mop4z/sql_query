@@ -429,6 +429,15 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T> {
 // CachedBoundQueryAs<T>
 // ---------------------------------------------------------------------------
 
+impl<T> CachedBoundQueryAs<T> {
+    /// Opts out of Redis caching, returning a plain `BoundQueryAs<T>`
+    /// that does not require a Redis connection.
+    #[must_use]
+    pub fn skip_cache(self) -> BoundQueryAs<T> {
+        BoundQueryAs { sql: self.sql, binds: self.binds, tables: self.tables, _t: PhantomData }
+    }
+}
+
 impl<T> CachedBoundQueryAs<T>
 where
     T: for<'r> FromRow<'r, PgRow> + Send + Unpin + Serialize + DeserializeOwned,
@@ -556,6 +565,15 @@ where
 // ---------------------------------------------------------------------------
 // CachedBoundQueryScalar<T>
 // ---------------------------------------------------------------------------
+
+impl<T> CachedBoundQueryScalar<T> {
+    /// Opts out of Redis caching, returning a plain `BoundQueryScalar<T>`
+    /// that does not require a Redis connection.
+    #[must_use]
+    pub fn skip_cache(self) -> BoundQueryScalar<T> {
+        BoundQueryScalar { sql: self.sql, binds: self.binds, tables: self.tables, _t: PhantomData }
+    }
+}
 
 impl<T> CachedBoundQueryScalar<T>
 where

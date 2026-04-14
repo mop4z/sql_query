@@ -573,6 +573,35 @@ SqlQ::update::<Users>()
     .execute(pool, redis).await?;
 ```
 
+## Read Cache Opt-Out
+
+Cached select queries can opt out of Redis caching with `.skip_cache()`, which
+returns the plain bound type that does not require a Redis connection:
+
+```rust
+// select_one_id returns CachedBoundQueryAs — opt out when Redis isn't available
+SqlQ::select_one_id::<Users>(user_id)?
+    .skip_cache()
+    .fetch_one(&pool).await?;
+
+// Same for manually cached queries
+SqlQ::select::<Users>()
+    .build()?
+    .bind_as::<Users>()
+    .cached(60)
+    .skip_cache()
+    .fetch_all(&pool).await?;
+
+// Works on scalar queries too
+SqlQ::select::<Users>()
+    .from([UC::Id.count()])
+    .build()?
+    .bind_scalar::<i64>()
+    .cached(60)
+    .skip_cache()
+    .fetch_one(&pool).await?;
+```
+
 ## Write Invalidation
 
 INSERT, UPDATE, and DELETE queries invalidate cache by default. All write
