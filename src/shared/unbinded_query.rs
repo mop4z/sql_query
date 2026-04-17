@@ -12,7 +12,7 @@ use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
 /// count go to debug; full bind values go to trace.
 #[inline]
 fn trace_sql(sql: &str, binds: &[SqlParam]) {
-    tracing::debug!("[{}] {sql}", binds.len());
+    tracing::trace!("[{}] {sql}", binds.len());
     tracing::trace!("{binds:?}");
 }
 
