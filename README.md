@@ -355,11 +355,12 @@ SqlQ::update::<Network>()
 #### UPDATE ... FROM
 
 ```rust
-// FROM a table
+// FROM a table — `.set()`/`.filter()` take `Expr<Users>`, so a FROM-table
+// column reaches the builder via `.coerce::<Users>()`
 SqlQ::update::<Users>()
     .set([UC::Name.eq("updated")])
     .from::<Posts>()
-    .filter([UC::Id.eq(1i32)])
+    .filter([UC::Id.eq(1i32), PostsCol::Title.eq("hello").coerce::<Users>()])
 
 // FROM a subquery
 SqlQ::update::<Users>()

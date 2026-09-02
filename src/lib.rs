@@ -70,8 +70,8 @@ impl SqlWith {
 
     /// `WITH ... UPDATE "T"`.
     #[must_use]
-    pub fn update<T: Table>(self) -> SqlUpdate {
-        SqlUpdate::new_with::<T>(self.ctes)
+    pub fn update<T: Table>(self) -> SqlUpdate<T> {
+        SqlUpdate::new_with(self.ctes)
     }
 }
 
@@ -112,8 +112,8 @@ impl SqlQ {
 
     /// Start an `UPDATE "T"` builder.
     #[must_use]
-    pub fn update<T: Table>() -> SqlUpdate {
-        SqlUpdate::new::<T>()
+    pub fn update<T: Table>() -> SqlUpdate<T> {
+        SqlUpdate::new()
     }
 
     /// # Errors
