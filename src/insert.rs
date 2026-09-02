@@ -456,10 +456,7 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(sql, r#"INSERT INTO "users" (name) VALUES ($1), ($2)"#);
-        assert_eq!(
-            binds,
-            vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],
-        );
+        assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::String("bob".into())],);
     }
 
     #[test]

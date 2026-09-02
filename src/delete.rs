@@ -189,9 +189,8 @@ mod tests {
     #[test]
     fn delete_with_or_filter() {
         let (sql, binds) = build(
-            SqlDelete::<Users>::new().filter([UsersCol::Name
-                .eq("alice")
-                .or(UsersCol::Name.eq("bob"))]),
+            SqlDelete::<Users>::new()
+                .filter([UsersCol::Name.eq("alice").or(UsersCol::Name.eq("bob"))]),
         );
         assert_eq!(
             sql,

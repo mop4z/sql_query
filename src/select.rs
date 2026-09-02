@@ -164,21 +164,21 @@ impl SqlSelect {
     }
 
     /// Sets the maximum number of rows to return.
-    #[must_use] 
+    #[must_use]
     pub const fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self
     }
 
     /// Sets the number of rows to skip before returning results.
-    #[must_use] 
+    #[must_use]
     pub const fn offset(mut self, n: u64) -> Self {
         self.offset = Some(n);
         self
     }
 
     /// Enables SELECT DISTINCT to eliminate duplicate rows.
-    #[must_use] 
+    #[must_use]
     pub const fn distinct(mut self) -> Self {
         self.distinct = true;
         self
@@ -186,14 +186,14 @@ impl SqlSelect {
 
     /// Wrap the entire query as `SELECT EXISTS (SELECT ...)`.
     /// The result is a single boolean — use `.bind_scalar::<bool>().fetch_one()`.
-    #[must_use] 
+    #[must_use]
     pub const fn exists(mut self) -> Self {
         self.exists = true;
         self
     }
 
     /// Append `FOR UPDATE` — acquire row-level exclusive locks on selected rows.
-    #[must_use] 
+    #[must_use]
     pub const fn for_update(mut self) -> Self {
         self.for_update = true;
         self
@@ -214,37 +214,37 @@ impl SqlSelect {
     }
 
     /// Combine with another SELECT using `UNION` (deduplicates rows).
-    #[must_use] 
+    #[must_use]
     pub fn union(self, other: Self) -> SqlSetOp {
         SqlSetOp::new(self, other)
     }
 
     /// Combine with another SELECT using `UNION ALL` (keeps duplicates).
-    #[must_use] 
+    #[must_use]
     pub fn union_all(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_all(self, other)
     }
 
     /// Combine with another SELECT using `INTERSECT`.
-    #[must_use] 
+    #[must_use]
     pub fn intersect(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_intersect(self, other)
     }
 
     /// Combine with another SELECT using `INTERSECT ALL`.
-    #[must_use] 
+    #[must_use]
     pub fn intersect_all(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_intersect_all(self, other)
     }
 
     /// Combine with another SELECT using `EXCEPT`.
-    #[must_use] 
+    #[must_use]
     pub fn except(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_except(self, other)
     }
 
     /// Combine with another SELECT using `EXCEPT ALL`.
-    #[must_use] 
+    #[must_use]
     pub fn except_all(self, other: Self) -> SqlSetOp {
         SqlSetOp::new_except_all(self, other)
     }
@@ -652,12 +652,10 @@ mod tests {
     fn select_column_with_filter_clause_binds_ordered_before_where() {
         let (sql, binds) = build(
             SqlSelect::new::<Users>()
-                .from([
-                    UsersCol::Id
-                        .count()
-                        .filter(UsersCol::Age.gt(SqlParam::I32(18)))
-                        .alias("adult_count"),
-                ])
+                .from([UsersCol::Id
+                    .count()
+                    .filter(UsersCol::Age.gt(SqlParam::I32(18)))
+                    .alias("adult_count")])
                 .filter([UsersCol::Name.eq("alice")]),
         );
         assert_eq!(

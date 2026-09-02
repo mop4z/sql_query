@@ -2,9 +2,7 @@
 use crate::shared::expr::Expr;
 use crate::shared::{
     Cte, Returning, Table, error::SqlQueryError, expr::EvalExpr, prepend_ctes, push_conditions,
-    push_returning,
-    unbinded_query::UnbindedWriteQuery,
-    value::SqlParam,
+    push_returning, unbinded_query::UnbindedWriteQuery, value::SqlParam,
 };
 
 /// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.

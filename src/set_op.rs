@@ -61,9 +61,8 @@ impl SqlSetOp {
     }
 
     fn with_kind(first: SqlSelect, kind: SetOpKind, second: SqlSelect) -> Self {
-        let (first_sql, first_binds, first_tables) = SqlBase::build(first)
-            .expect("set op: first query build failed")
-            .into_raw_with_tables();
+        let (first_sql, first_binds, first_tables) =
+            SqlBase::build(first).expect("set op: first query build failed").into_raw_with_tables();
         let (second_sql, second_binds, second_tables) = SqlBase::build(second)
             .expect("set op: second query build failed")
             .into_raw_with_tables();
@@ -96,32 +95,32 @@ impl SqlSetOp {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn union(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::Union, other)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn union_all(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::UnionAll, other)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn intersect(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::Intersect, other)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn intersect_all(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::IntersectAll, other)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn except(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::Except, other)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn except_all(self, other: SqlSelect) -> Self {
         self.push(SetOpKind::ExceptAll, other)
     }
@@ -139,14 +138,14 @@ impl SqlSetOp {
     }
 
     /// Sets the maximum number of rows to return from the combined result.
-    #[must_use] 
+    #[must_use]
     pub const fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self
     }
 
     /// Sets the number of rows to skip in the combined result.
-    #[must_use] 
+    #[must_use]
     pub const fn offset(mut self, n: u64) -> Self {
         self.offset = Some(n);
         self

@@ -4,8 +4,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use sql_query::{
-    EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table,
-    UnbindedWriteQuery, define_id,
+    EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table, UnbindedWriteQuery,
+    define_id,
 };
 use sqlx::FromRow;
 
