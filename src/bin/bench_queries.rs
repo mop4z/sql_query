@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
-use std::hint::black_box;
-use std::time::Instant;
+use std::{hint::black_box, time::Instant};
 
 use sql_query::{
     EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table, UnbindedWriteQuery,
@@ -17,7 +16,8 @@ define_id!(OrderId);
 
 #[derive(Debug, FromRow, SqlCols)]
 #[allow(dead_code)]
-struct Users {
+struct Users
+{
     id: UserId,
     name: String,
     email: String,
@@ -26,32 +26,38 @@ struct Users {
     created_at: String,
 }
 
-impl Table for Users {
+impl Table for Users
+{
     type Col = UsersCol;
     type Id = UserId;
-    const TABLE_NAME: &'static str = "users";
+
     const PRIMARY_KEY: &'static str = "id";
+    const TABLE_NAME: &'static str = "users";
 }
 
 #[derive(Debug, FromRow, SqlCols)]
 #[allow(dead_code)]
-struct Posts {
+struct Posts
+{
     id: PostId,
     user_id: UserId,
     title: String,
     body: String,
 }
 
-impl Table for Posts {
+impl Table for Posts
+{
     type Col = PostsCol;
     type Id = PostId;
-    const TABLE_NAME: &'static str = "posts";
+
     const PRIMARY_KEY: &'static str = "id";
+    const TABLE_NAME: &'static str = "posts";
 }
 
 #[derive(Debug, FromRow, SqlCols)]
 #[allow(dead_code)]
-struct Orders {
+struct Orders
+{
     id: OrderId,
     user_id: UserId,
     amount: i32,
@@ -59,32 +65,39 @@ struct Orders {
     created_at: String,
 }
 
-impl Table for Orders {
+impl Table for Orders
+{
     type Col = OrdersCol;
     type Id = OrderId;
-    const TABLE_NAME: &'static str = "orders";
+
     const PRIMARY_KEY: &'static str = "id";
+    const TABLE_NAME: &'static str = "orders";
 }
 
 // -- Helpers -----------------------------------------------------------------
 
 type UExpr = Expr<Users>;
 
-fn build_to_sql(q: impl SqlBase) -> (String, Vec<SqlParam>) {
+fn build_to_sql(q: impl SqlBase) -> (String, Vec<SqlParam>)
+{
     q.build().unwrap().into_raw()
 }
 
-fn write_to_sql(q: UnbindedWriteQuery) -> (String, Vec<SqlParam>) {
+fn write_to_sql(q: UnbindedWriteQuery) -> (String, Vec<SqlParam>)
+{
     q.into_raw()
 }
 
-fn run_bench(name: &str, iters: u64, f: impl Fn()) {
+fn run_bench(name: &str, iters: u64, f: impl Fn())
+{
     // warmup
-    for _ in 0..1000 {
+    for _ in 0..1000
+    {
         f();
     }
     let start = Instant::now();
-    for _ in 0..iters {
+    for _ in 0..iters
+    {
         f();
         black_box(());
     }
@@ -95,15 +108,18 @@ fn run_bench(name: &str, iters: u64, f: impl Fn()) {
 
 // -- Benchmarks --------------------------------------------------------------
 
-fn bench_expr_simple_eq() {
+fn bench_expr_simple_eq()
+{
     black_box(UsersCol::Name.eq("alice"));
 }
 
-fn bench_expr_chained() {
+fn bench_expr_chained()
+{
     black_box(UExpr::new().column(UsersCol::Name).lower().alias("lname").eval().unwrap());
 }
 
-fn bench_expr_arithmetic() {
+fn bench_expr_arithmetic()
+{
     black_box(
         UExpr::new()
             .column(UsersCol::Age)
@@ -113,17 +129,20 @@ fn bench_expr_arithmetic() {
     );
 }
 
-fn bench_select_star() {
+fn bench_select_star()
+{
     black_box(build_to_sql(SqlQ::select::<Users>()));
 }
 
-fn bench_select_filtered() {
+fn bench_select_filtered()
+{
     black_box(build_to_sql(
         SqlQ::select::<Users>().filter([UsersCol::Name.eq("alice"), UsersCol::Age.gt(18i32)]),
     ));
 }
 
-fn bench_select_full() {
+fn bench_select_full()
+{
     black_box(build_to_sql(
         SqlQ::select::<Users>()
             .distinct()
@@ -143,7 +162,8 @@ fn bench_select_full() {
     ));
 }
 
-fn bench_select_with_join() {
+fn bench_select_with_join()
+{
     black_box(build_to_sql(
         SqlQ::select::<Users>()
             .from([UExpr::new().column(UsersCol::Name)])
@@ -152,7 +172,8 @@ fn bench_select_with_join() {
     ));
 }
 
-fn bench_select_with_group_by() {
+fn bench_select_with_group_by()
+{
     black_box(build_to_sql(
         SqlQ::select::<Users>()
             .from([UExpr::from(UsersCol::Age), UsersCol::Id.count().alias("count")])
@@ -161,7 +182,8 @@ fn bench_select_with_group_by() {
     ));
 }
 
-fn bench_select_with_cte() {
+fn bench_select_with_cte()
+{
     black_box(build_to_sql(
         SqlQ::with([("active_users", SqlQ::select::<Users>().filter([UsersCol::Age.gte(18i32)]))])
             .select::<Users>()
@@ -169,7 +191,8 @@ fn bench_select_with_cte() {
     ));
 }
 
-fn bench_insert_single() {
+fn bench_insert_single()
+{
     black_box(write_to_sql(
         SqlQ::insert::<Users>()
             .values([
@@ -183,7 +206,8 @@ fn bench_insert_single() {
     ));
 }
 
-fn bench_insert_batch() {
+fn bench_insert_batch()
+{
     black_box(write_to_sql(
         SqlQ::insert::<Users>()
             .values_nested([
@@ -219,7 +243,8 @@ fn bench_insert_batch() {
     ));
 }
 
-fn bench_update_with_filter() {
+fn bench_update_with_filter()
+{
     black_box(write_to_sql(
         SqlQ::update::<Users>()
             .set([UsersCol::Name.eq("bob"), UsersCol::Age.eq(31i32)])
@@ -229,7 +254,8 @@ fn bench_update_with_filter() {
     ));
 }
 
-fn bench_delete_with_filter() {
+fn bench_delete_with_filter()
+{
     black_box(write_to_sql(
         SqlQ::delete::<Users>()
             .filter([UsersCol::Name.eq("alice"), UsersCol::Age.lt(18i32)])
@@ -238,7 +264,8 @@ fn bench_delete_with_filter() {
     ));
 }
 
-fn bench_complex_expr() {
+fn bench_complex_expr()
+{
     black_box(
         UExpr::new()
             .column(UsersCol::Age)
@@ -251,7 +278,8 @@ fn bench_complex_expr() {
     );
 }
 
-fn bench_raw_string_baseline() {
+fn bench_raw_string_baseline()
+{
     // Hand-written equivalent of bench_select_full for comparison
     black_box({
         let sql = r#"SELECT DISTINCT "users".name, "users".email, "users".age FROM "users" WHERE 1=1 AND "users".age >= $1 AND "users".name <> $2 AND "users".email ILIKE $3 ORDER BY "users".name ASC LIMIT $4 OFFSET $5"#.to_string();
@@ -268,7 +296,8 @@ fn bench_raw_string_baseline() {
 
 // -- Main --------------------------------------------------------------------
 
-fn main() {
+fn main()
+{
     let iters = 100_000;
 
     println!("sql_query benchmarks ({iters} iterations each)");

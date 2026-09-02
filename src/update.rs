@@ -10,7 +10,8 @@ use crate::shared::{
 };
 
 /// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.
-pub struct SqlUpdate<T: Table> {
+pub struct SqlUpdate<T: Table>
+{
     set_clauses: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     /// `Err` = a `from_subquery` whose build failed; surfaced by `.build()`.
     from_tables: Vec<Result<Cow<'static, str>, sqlx::Error>>,
@@ -25,12 +26,15 @@ pub struct SqlUpdate<T: Table> {
     _t: PhantomData<T>,
 }
 
-impl<T: Table> SqlUpdate<T> {
-    pub(super) const fn new() -> Self {
+impl<T: Table> SqlUpdate<T>
+{
+    pub(super) const fn new() -> Self
+    {
         Self::new_with(vec![])
     }
 
-    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self {
+    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self
+    {
         Self {
             set_clauses: Vec::new(),
             from_tables: Vec::new(),
@@ -44,22 +48,26 @@ impl<T: Table> SqlUpdate<T> {
         }
     }
 
-    fn add_table(&mut self, t: &'static str) {
-        if t != T::TABLE_NAME && !self.tables.contains(&t) {
+    fn add_table(&mut self, t: &'static str)
+    {
+        if t != T::TABLE_NAME && !self.tables.contains(&t)
+        {
             self.tables.push(t);
         }
     }
 
     /// Add `SET col = val` clauses. Pass `Col::Name.eq(val)` expressions,
     /// or use `Expr::new().column(col).eq(Expr::new().now())` for computed values.
-    pub fn set(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn set(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self
+    {
         self.set_clauses.extend(exprs.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
     /// Add a `FROM "table"` clause for multi-table updates (Postgres-specific).
     /// Allows referencing columns from another table in SET and WHERE clauses.
-    pub fn from<F: Table>(mut self) -> Self {
+    pub fn from<F: Table>(mut self) -> Self
+    {
         self.from_tables.push(Ok(Cow::Borrowed(F::TABLE_NAME)));
         self.add_table(F::TABLE_NAME);
         self
@@ -69,10 +77,13 @@ impl<T: Table> SqlUpdate<T> {
     /// A subquery that fails to build surfaces as `Err` from `.build()`.
     #[must_use]
     #[allow(clippy::wrong_self_convention)]
-    pub fn from_subquery(mut self, alias: &str, query: impl crate::SqlBase) -> Self {
-        let uq = match query.build() {
+    pub fn from_subquery(mut self, alias: &str, query: impl crate::SqlBase) -> Self
+    {
+        let uq = match query.build()
+        {
             Ok(uq) => uq,
-            Err(e) => {
+            Err(e) =>
+            {
                 self.from_tables.push(Err(e));
                 return self;
             }
@@ -85,44 +96,51 @@ impl<T: Table> SqlUpdate<T> {
         s.push_str(alias);
         self.from_tables.push(Ok(Cow::Owned(s)));
         self.from_binds.extend(sub_binds);
-        for t in sub_tables {
+        for t in sub_tables
+        {
             self.add_table(t);
         }
         self
     }
 
     /// Adds WHERE conditions that are `ANDed` together.
-    pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self
+    {
         self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self
+    {
         self.returning = Returning::columns(columns);
         self
     }
 
     /// Adds a RETURNING * clause to return all columns of updated rows.
-    pub fn returning_all(mut self) -> Self {
+    pub fn returning_all(mut self) -> Self
+    {
         self.returning = Returning::All;
         self
     }
 
     /// Explicitly opts out of a RETURNING clause (fire-and-forget update).
-    pub fn no_returning(mut self) -> Self {
+    pub fn no_returning(mut self) -> Self
+    {
         self.returning = Returning::None;
         self
     }
 
     /// Forces SET clauses with NULL values to be included (normally skipped).
-    pub const fn include_nulls(mut self) -> Self {
+    pub const fn include_nulls(mut self) -> Self
+    {
         self.include_nulls = true;
         self
     }
 
     /// Returns true if at least one SET clause with a non-null value has been added.
-    pub fn has_non_null_sets(&self) -> bool {
+    pub fn has_non_null_sets(&self) -> bool
+    {
         self.set_clauses.iter().any(|r| {
             r.as_ref().is_ok_and(|(_, binds)| binds.iter().any(|b| !matches!(b, SqlParam::Null)))
         })
@@ -131,7 +149,8 @@ impl<T: Table> SqlUpdate<T> {
     /// # Errors
     /// Returns `sqlx::Error::Protocol` if any SET, filter, or RETURNING expression
     /// fails to compose, or propagates a failed `from_subquery` build.
-    pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error> {
+    pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error>
+    {
         let mut sql = String::with_capacity(128);
         sql.push_str("UPDATE \"");
         sql.push_str(T::TABLE_NAME);
@@ -144,7 +163,8 @@ impl<T: Table> SqlUpdate<T> {
 
         let include_nulls = self.include_nulls;
         let mut set_count = 0;
-        for result in self.set_clauses {
+        for result in self.set_clauses
+        {
             let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
             if !include_nulls
                 && params.iter().all(|b| matches!(b, SqlParam::Null))
@@ -152,7 +172,8 @@ impl<T: Table> SqlUpdate<T> {
             {
                 continue;
             }
-            if set_count > 0 {
+            if set_count > 0
+            {
                 sql.push_str(", ");
             }
             // Postgres rejects qualified SET targets ("table".col = ...) —
@@ -167,14 +188,19 @@ impl<T: Table> SqlUpdate<T> {
             set_count += 1;
         }
 
-        if !self.from_tables.is_empty() {
+        if !self.from_tables.is_empty()
+        {
             sql.push_str(" FROM ");
-            for (i, ft) in self.from_tables.into_iter().enumerate() {
-                if i > 0 {
+            for (i, ft) in self.from_tables.into_iter().enumerate()
+            {
+                if i > 0
+                {
                     sql.push_str(", ");
                 }
-                match ft? {
-                    Cow::Borrowed(table) => {
+                match ft?
+                {
+                    Cow::Borrowed(table) =>
+                    {
                         sql.push('"');
                         sql.push_str(table);
                         sql.push('"');
@@ -193,61 +219,72 @@ impl<T: Table> SqlUpdate<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
+    use sqlx::FromRow;
+
     use super::*;
     use crate::{SqlCols, define_id};
-    use sqlx::FromRow;
 
     define_id!(TestId);
 
     #[derive(Debug, FromRow, SqlCols)]
     #[allow(dead_code)]
-    struct Users {
+    struct Users
+    {
         id: TestId,
         name: String,
         age: i32,
     }
 
-    impl Table for Users {
+    impl Table for Users
+    {
         type Col = UsersCol;
         type Id = TestId;
-        const TABLE_NAME: &'static str = "users";
+
         const PRIMARY_KEY: &'static str = "id";
+        const TABLE_NAME: &'static str = "users";
     }
 
     #[derive(Debug, FromRow, SqlCols)]
     #[allow(dead_code)]
-    struct Posts {
+    struct Posts
+    {
         id: TestId,
         user_id: TestId,
         title: String,
     }
 
-    impl Table for Posts {
+    impl Table for Posts
+    {
         type Col = PostsCol;
         type Id = TestId;
-        const TABLE_NAME: &'static str = "posts";
+
         const PRIMARY_KEY: &'static str = "id";
+        const TABLE_NAME: &'static str = "posts";
     }
 
     type UExpr = Expr<Users>;
     #[allow(dead_code)]
     type PExpr = Expr<Posts>;
 
-    fn build<T: Table>(update: SqlUpdate<T>) -> (String, Vec<SqlParam>) {
+    fn build<T: Table>(update: SqlUpdate<T>) -> (String, Vec<SqlParam>)
+    {
         let bq = update.build().unwrap().bind().skip_inval();
         (bq.sql, bq.binds)
     }
 
     #[test]
-    fn update_single_set() {
+    fn update_single_set()
+    {
         let (sql, binds) = build(SqlUpdate::<Users>::new().set([UsersCol::Name.eq("alice")]));
         assert_eq!(sql, r#"UPDATE "users" SET name = $1"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
     #[test]
-    fn update_multiple_sets() {
+    fn update_multiple_sets()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new().set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)]),
         );
@@ -256,7 +293,8 @@ mod tests {
     }
 
     #[test]
-    fn update_with_filter() {
+    fn update_with_filter()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("bob")])
@@ -267,7 +305,8 @@ mod tests {
     }
 
     #[test]
-    fn update_with_filter_and_returning() {
+    fn update_with_filter_and_returning()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("bob")])
@@ -282,7 +321,8 @@ mod tests {
     }
 
     #[test]
-    fn update_with_val_fn_now() {
+    fn update_with_val_fn_now()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UExpr::new().column(UsersCol::Name).eq(UExpr::new().now())]),
@@ -292,7 +332,8 @@ mod tests {
     }
 
     #[test]
-    fn update_bind_ordering_set_before_where() {
+    fn update_bind_ordering_set_before_where()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("new_name"), UsersCol::Age.eq(25i32)])
@@ -314,7 +355,8 @@ mod tests {
     }
 
     #[test]
-    fn update_with_or_filter() {
+    fn update_with_or_filter()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Age.eq(0i32)])
@@ -335,7 +377,8 @@ mod tests {
     }
 
     #[test]
-    fn update_from_single_table() {
+    fn update_from_single_table()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("updated")])
@@ -350,7 +393,8 @@ mod tests {
     }
 
     #[test]
-    fn update_from_with_join_condition() {
+    fn update_from_with_join_condition()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("updated")])
@@ -373,7 +417,8 @@ mod tests {
     }
 
     #[test]
-    fn update_skips_null_sets_by_default() {
+    fn update_skips_null_sets_by_default()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)]),
@@ -383,7 +428,8 @@ mod tests {
     }
 
     #[test]
-    fn update_include_nulls() {
+    fn update_include_nulls()
+    {
         let (sql, binds) = build(
             SqlUpdate::<Users>::new()
                 .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
@@ -394,7 +440,8 @@ mod tests {
     }
 
     #[test]
-    fn update_from_subquery() {
+    fn update_from_subquery()
+    {
         let sub = crate::select::SqlSelect::new::<Posts>()
             .from([PExpr::new().column(PostsCol::UserId)])
             .filter([PostsCol::Title.eq("hello")]);

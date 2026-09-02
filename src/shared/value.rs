@@ -31,7 +31,8 @@ pub trait SqlEnum:
 /// Object-safe trait for type-erased Postgres bind parameters.
 /// Implemented via blanket impl for any `Encode + Type + Clone + Send + Sync + Debug`.
 /// Used internally by `SqlParam::Custom` to box arbitrary Postgres types.
-pub trait SqlParamCustom: Send + Sync {
+pub trait SqlParamCustom: Send + Sync
+{
     fn encode_param(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError>;
     fn type_info_param(&self) -> PgTypeInfo;
     fn clone_box(&self) -> Box<dyn SqlParamCustom>;
@@ -42,16 +43,23 @@ impl<T> SqlParamCustom for T
 where
     T: for<'q> Encode<'q, Postgres> + Type<Postgres> + Clone + Send + Sync + fmt::Debug + 'static,
 {
-    fn encode_param(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
+    fn encode_param(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError>
+    {
         self.encode_by_ref(buf)
     }
-    fn type_info_param(&self) -> PgTypeInfo {
+
+    fn type_info_param(&self) -> PgTypeInfo
+    {
         <T as Type<Postgres>>::type_info()
     }
-    fn clone_box(&self) -> Box<dyn SqlParamCustom> {
+
+    fn clone_box(&self) -> Box<dyn SqlParamCustom>
+    {
         Box::new(self.clone())
     }
-    fn debug_fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+
+    fn debug_fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+    {
         fmt::Debug::fmt(self, f)
     }
 }
@@ -63,7 +71,8 @@ where
 /// common Rust types (`String`, `i32`, `Uuid`, `Vec<i64>`, etc.), `Option<T>`
 /// maps to the inner variant or `Null`, and custom Postgres enums go through
 /// the `Custom` variant via `#[derive(SqlParamEnum)]`.
-pub enum SqlParam {
+pub enum SqlParam
+{
     String(String),
     I16(i16),
     I32(i32),
@@ -87,14 +96,17 @@ pub enum SqlParam {
     Null,
 }
 
-impl SqlParam {
+impl SqlParam
+{
     #[must_use]
-    pub const fn is_null(&self) -> bool {
+    pub const fn is_null(&self) -> bool
+    {
         matches!(self, Self::Null)
     }
 
     #[must_use]
-    pub const fn is_array(&self) -> bool {
+    pub const fn is_array(&self) -> bool
+    {
         matches!(
             self,
             Self::StringArray(_)
@@ -125,7 +137,8 @@ impl SqlParam {
     /// # Panics
     /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Serializes any `Serialize` value to `SqlParam::Json`.
-    pub fn json<T: serde::Serialize>(val: T) -> Self {
+    pub fn json<T: serde::Serialize>(val: T) -> Self
+    {
         Self::Json(serde_json::to_value(val).expect("json serialization failed"))
     }
 
@@ -138,109 +151,137 @@ impl SqlParam {
     /// variants). `Custom` and `Json` fall back to debug formatting via a
     /// scratch buffer because they have no canonical raw byte form.
     #[allow(clippy::too_many_lines)] // one fast switch over all variants
-    pub(crate) fn hash_into(&self, h: &mut Xxh3, scratch: &mut String) {
+    pub(crate) fn hash_into(&self, h: &mut Xxh3, scratch: &mut String)
+    {
         // Discriminant tags — keep stable; changing them invalidates existing
         // cache entries.
-        match self {
+        match self
+        {
             Self::Null => h.update(&[0]),
-            Self::Bool(v) => {
+            Self::Bool(v) =>
+            {
                 h.update(&[1, u8::from(*v)]);
             }
-            Self::I16(v) => {
+            Self::I16(v) =>
+            {
                 h.update(&[2]);
                 h.update(&v.to_le_bytes());
             }
-            Self::I32(v) => {
+            Self::I32(v) =>
+            {
                 h.update(&[3]);
                 h.update(&v.to_le_bytes());
             }
-            Self::I64(v) => {
+            Self::I64(v) =>
+            {
                 h.update(&[4]);
                 h.update(&v.to_le_bytes());
             }
-            Self::F64(v) => {
+            Self::F64(v) =>
+            {
                 h.update(&[5]);
                 h.update(&v.to_bits().to_le_bytes());
             }
-            Self::String(v) => {
+            Self::String(v) =>
+            {
                 h.update(&[6]);
                 h.update(&(v.len() as u64).to_le_bytes());
                 h.update(v.as_bytes());
             }
-            Self::Uuid(v) => {
+            Self::Uuid(v) =>
+            {
                 h.update(&[7]);
                 h.update(v.as_bytes());
             }
-            Self::DateTimeUtc(v) => {
+            Self::DateTimeUtc(v) =>
+            {
                 h.update(&[8]);
                 h.update(&v.timestamp().to_le_bytes());
                 h.update(&v.timestamp_subsec_nanos().to_le_bytes());
             }
-            Self::Decimal(v) => {
+            Self::Decimal(v) =>
+            {
                 h.update(&[9]);
                 h.update(&v.serialize());
             }
-            Self::I32Array(v) => {
+            Self::I32Array(v) =>
+            {
                 h.update(&[10]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for x in v {
+                for x in v
+                {
                     h.update(&x.to_le_bytes());
                 }
             }
-            Self::I64Array(v) => {
+            Self::I64Array(v) =>
+            {
                 h.update(&[11]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for x in v {
+                for x in v
+                {
                     h.update(&x.to_le_bytes());
                 }
             }
-            Self::F64Array(v) => {
+            Self::F64Array(v) =>
+            {
                 h.update(&[12]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for x in v {
+                for x in v
+                {
                     h.update(&x.to_bits().to_le_bytes());
                 }
             }
-            Self::BoolArray(v) => {
+            Self::BoolArray(v) =>
+            {
                 h.update(&[13]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for x in v {
+                for x in v
+                {
                     h.update(&[u8::from(*x)]);
                 }
             }
-            Self::StringArray(v) => {
+            Self::StringArray(v) =>
+            {
                 h.update(&[14]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for s in v {
+                for s in v
+                {
                     h.update(&(s.len() as u64).to_le_bytes());
                     h.update(s.as_bytes());
                 }
             }
-            Self::UuidArray(v) => {
+            Self::UuidArray(v) =>
+            {
                 h.update(&[15]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for u in v {
+                for u in v
+                {
                     h.update(u.as_bytes());
                 }
             }
-            Self::DateTimeUtcArray(v) => {
+            Self::DateTimeUtcArray(v) =>
+            {
                 h.update(&[16]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for d in v {
+                for d in v
+                {
                     h.update(&d.timestamp().to_le_bytes());
                     h.update(&d.timestamp_subsec_nanos().to_le_bytes());
                 }
             }
-            Self::DecimalArray(v) => {
+            Self::DecimalArray(v) =>
+            {
                 h.update(&[17]);
                 h.update(&(v.len() as u64).to_le_bytes());
-                for d in v {
+                for d in v
+                {
                     h.update(&d.serialize());
                 }
             }
             // Json + Custom: no canonical byte form. Fall back to debug
             // formatting through the caller's reusable scratch buffer.
-            Self::Json(_) | Self::Custom(_) | Self::CustomArray(_) => {
+            Self::Json(_) | Self::Custom(_) | Self::CustomArray(_) =>
+            {
                 use std::fmt::Write;
                 h.update(&[18]);
                 scratch.clear();
@@ -252,9 +293,12 @@ impl SqlParam {
     }
 }
 
-impl fmt::Debug for SqlParam {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
+impl fmt::Debug for SqlParam
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+    {
+        match self
+        {
             Self::String(v) => f.debug_tuple("String").field(v).finish(),
             Self::I16(v) => f.debug_tuple("I16").field(v).finish(),
             Self::I32(v) => f.debug_tuple("I32").field(v).finish(),
@@ -279,9 +323,12 @@ impl fmt::Debug for SqlParam {
     }
 }
 
-impl Clone for SqlParam {
-    fn clone(&self) -> Self {
-        match self {
+impl Clone for SqlParam
+{
+    fn clone(&self) -> Self
+    {
+        match self
+        {
             Self::String(v) => Self::String(v.clone()),
             Self::I16(v) => Self::I16(*v),
             Self::I32(v) => Self::I32(*v),
@@ -307,9 +354,12 @@ impl Clone for SqlParam {
     }
 }
 
-impl PartialEq for SqlParam {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
+impl PartialEq for SqlParam
+{
+    fn eq(&self, other: &Self) -> bool
+    {
+        match (self, other)
+        {
             (Self::String(a), Self::String(b)) => a == b,
             (Self::I16(a), Self::I16(b)) => a == b,
             (Self::I32(a), Self::I32(b)) => a == b,
@@ -375,14 +425,18 @@ impl_sql_param_from! {
     Vec<Uuid> => UuidArray,
 }
 
-impl From<&str> for SqlParam {
-    fn from(value: &str) -> Self {
+impl From<&str> for SqlParam
+{
+    fn from(value: &str) -> Self
+    {
         Self::String(value.to_string())
     }
 }
 
-impl From<Vec<&str>> for SqlParam {
-    fn from(value: Vec<&str>) -> Self {
+impl From<Vec<&str>> for SqlParam
+{
+    fn from(value: Vec<&str>) -> Self
+    {
         Self::StringArray(value.into_iter().map(String::from).collect())
     }
 }
@@ -409,14 +463,18 @@ impl_sql_param_from_ref_vec! {
     Uuid => UuidArray,
 }
 
-impl<T: crate::Id> From<&[T]> for SqlParam {
-    fn from(value: &[T]) -> Self {
+impl<T: crate::Id> From<&[T]> for SqlParam
+{
+    fn from(value: &[T]) -> Self
+    {
         Self::UuidArray(value.iter().map(|id| id.raw()).collect())
     }
 }
 
-impl From<NaiveDate> for SqlParam {
-    fn from(value: NaiveDate) -> Self {
+impl From<NaiveDate> for SqlParam
+{
+    fn from(value: NaiveDate) -> Self
+    {
         Self::DateTimeUtc(value.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc())
     }
 }
@@ -425,13 +483,16 @@ impl<T> From<Option<T>> for SqlParam
 where
     Self: From<T>,
 {
-    fn from(value: Option<T>) -> Self {
+    fn from(value: Option<T>) -> Self
+    {
         value.map_or(Self::Null, Into::into)
     }
 }
 
-impl<T: SqlEnum> From<Vec<T>> for SqlParam {
-    fn from(value: Vec<T>) -> Self {
+impl<T: SqlEnum> From<Vec<T>> for SqlParam
+{
+    fn from(value: Vec<T>) -> Self
+    {
         Self::CustomArray(Box::new(value))
     }
 }
@@ -454,12 +515,16 @@ macro_rules! type_info_dispatch {
     };
 }
 
-impl Encode<'_, Postgres> for SqlParam {
-    fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
-        match self {
+impl Encode<'_, Postgres> for SqlParam
+{
+    fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError>
+    {
+        match self
+        {
             Self::Custom(v) | Self::CustomArray(v) => v.encode_param(buf),
             Self::Null => Ok(IsNull::Yes),
-            other => {
+            other =>
+            {
                 encode_dispatch!(other, buf, encode_by_ref;
                     String(String), I16(i16), I32(i32), I64(i64), F64(f64), Bool(bool),
                     Decimal(Decimal), Json(Value), DateTimeUtc(DateTime<Utc>),
@@ -472,8 +537,10 @@ impl Encode<'_, Postgres> for SqlParam {
         }
     }
 
-    fn produces(&self) -> Option<<Postgres as Database>::TypeInfo> {
-        match self {
+    fn produces(&self) -> Option<<Postgres as Database>::TypeInfo>
+    {
+        match self
+        {
             Self::Custom(v) | Self::CustomArray(v) => Some(v.type_info_param()),
             Self::Null => Some(<() as Type<Postgres>>::type_info()),
             other => Some(type_info_dispatch!(other;
@@ -488,8 +555,10 @@ impl Encode<'_, Postgres> for SqlParam {
     }
 }
 
-impl Type<Postgres> for SqlParam {
-    fn type_info() -> PgTypeInfo {
+impl Type<Postgres> for SqlParam
+{
+    fn type_info() -> PgTypeInfo
+    {
         <() as Type<Postgres>>::type_info()
     }
 }

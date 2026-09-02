@@ -9,7 +9,8 @@ use crate::{
 };
 
 #[derive(strum::AsRefStr)]
-enum SetOpKind {
+enum SetOpKind
+{
     #[strum(serialize = "UNION")]
     Union,
     #[strum(serialize = "UNION ALL")]
@@ -25,7 +26,8 @@ enum SetOpKind {
 }
 
 /// Builder for compound SELECT statements joined by UNION / INTERSECT / EXCEPT.
-pub struct SqlSetOp {
+pub struct SqlSetOp
+{
     first_sql: String,
     first_binds: Vec<SqlParam>,
     rest: Vec<(SetOpKind, String, Vec<SqlParam>, Vec<&'static str>)>,
@@ -35,40 +37,50 @@ pub struct SqlSetOp {
     offset: Option<u64>,
 }
 
-impl SqlSetOp {
-    pub(crate) fn new(first: SqlSelect, second: SqlSelect) -> Self {
+impl SqlSetOp
+{
+    pub(crate) fn new(first: SqlSelect, second: SqlSelect) -> Self
+    {
         Self::with_kind(first, SetOpKind::Union, second)
     }
 
-    pub(crate) fn new_all(first: SqlSelect, second: SqlSelect) -> Self {
+    pub(crate) fn new_all(first: SqlSelect, second: SqlSelect) -> Self
+    {
         Self::with_kind(first, SetOpKind::UnionAll, second)
     }
 
-    pub(crate) fn new_intersect(first: SqlSelect, second: SqlSelect) -> Self {
+    pub(crate) fn new_intersect(first: SqlSelect, second: SqlSelect) -> Self
+    {
         Self::with_kind(first, SetOpKind::Intersect, second)
     }
 
-    pub(crate) fn new_intersect_all(first: SqlSelect, second: SqlSelect) -> Self {
+    pub(crate) fn new_intersect_all(first: SqlSelect, second: SqlSelect) -> Self
+    {
         Self::with_kind(first, SetOpKind::IntersectAll, second)
     }
 
-    pub(crate) fn new_except(first: SqlSelect, second: SqlSelect) -> Self {
+    pub(crate) fn new_except(first: SqlSelect, second: SqlSelect) -> Self
+    {
         Self::with_kind(first, SetOpKind::Except, second)
     }
 
-    pub(crate) fn new_except_all(first: SqlSelect, second: SqlSelect) -> Self {
+    pub(crate) fn new_except_all(first: SqlSelect, second: SqlSelect) -> Self
+    {
         Self::with_kind(first, SetOpKind::ExceptAll, second)
     }
 
-    fn with_kind(first: SqlSelect, kind: SetOpKind, second: SqlSelect) -> Self {
+    fn with_kind(first: SqlSelect, kind: SetOpKind, second: SqlSelect) -> Self
+    {
         let (first_sql, first_binds, first_tables) =
             SqlBase::build(first).expect("set op: first query build failed").into_raw_with_tables();
         let (second_sql, second_binds, second_tables) = SqlBase::build(second)
             .expect("set op: second query build failed")
             .into_raw_with_tables();
         let mut tables = first_tables;
-        for t in &second_tables {
-            if !tables.contains(t) {
+        for t in &second_tables
+        {
+            if !tables.contains(t)
+            {
                 tables.push(*t);
             }
         }
@@ -83,11 +95,14 @@ impl SqlSetOp {
         }
     }
 
-    fn push(mut self, kind: SetOpKind, other: SqlSelect) -> Self {
+    fn push(mut self, kind: SetOpKind, other: SqlSelect) -> Self
+    {
         let (sql, binds, other_tables) =
             SqlBase::build(other).expect("set op: query build failed").into_raw_with_tables();
-        for t in &other_tables {
-            if !self.tables.contains(t) {
+        for t in &other_tables
+        {
+            if !self.tables.contains(t)
+            {
                 self.tables.push(*t);
             }
         }
@@ -96,32 +111,38 @@ impl SqlSetOp {
     }
 
     #[must_use]
-    pub fn union(self, other: SqlSelect) -> Self {
+    pub fn union(self, other: SqlSelect) -> Self
+    {
         self.push(SetOpKind::Union, other)
     }
 
     #[must_use]
-    pub fn union_all(self, other: SqlSelect) -> Self {
+    pub fn union_all(self, other: SqlSelect) -> Self
+    {
         self.push(SetOpKind::UnionAll, other)
     }
 
     #[must_use]
-    pub fn intersect(self, other: SqlSelect) -> Self {
+    pub fn intersect(self, other: SqlSelect) -> Self
+    {
         self.push(SetOpKind::Intersect, other)
     }
 
     #[must_use]
-    pub fn intersect_all(self, other: SqlSelect) -> Self {
+    pub fn intersect_all(self, other: SqlSelect) -> Self
+    {
         self.push(SetOpKind::IntersectAll, other)
     }
 
     #[must_use]
-    pub fn except(self, other: SqlSelect) -> Self {
+    pub fn except(self, other: SqlSelect) -> Self
+    {
         self.push(SetOpKind::Except, other)
     }
 
     #[must_use]
-    pub fn except_all(self, other: SqlSelect) -> Self {
+    pub fn except_all(self, other: SqlSelect) -> Self
+    {
         self.push(SetOpKind::ExceptAll, other)
     }
 
@@ -129,7 +150,8 @@ impl SqlSetOp {
     /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Appends an ORDER BY clause on the combined result.
     #[must_use]
-    pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self {
+    pub fn order_by(mut self, column: impl EvalExpr, order: SqlOrder) -> Self
+    {
         let mut s = column.eval().unwrap().0;
         s.push(' ');
         s.push_str(order.as_ref());
@@ -139,25 +161,30 @@ impl SqlSetOp {
 
     /// Sets the maximum number of rows to return from the combined result.
     #[must_use]
-    pub const fn limit(mut self, n: u64) -> Self {
+    pub const fn limit(mut self, n: u64) -> Self
+    {
         self.limit = Some(n);
         self
     }
 
     /// Sets the number of rows to skip in the combined result.
     #[must_use]
-    pub const fn offset(mut self, n: u64) -> Self {
+    pub const fn offset(mut self, n: u64) -> Self
+    {
         self.offset = Some(n);
         self
     }
 }
 
-impl SqlBase for SqlSetOp {
-    fn build(self) -> Result<UnbindedQuery, sqlx::Error> {
+impl SqlBase for SqlSetOp
+{
+    fn build(self) -> Result<UnbindedQuery, sqlx::Error>
+    {
         let mut sql = self.first_sql;
         let mut binds = self.first_binds;
 
-        for (kind, part_sql, part_binds, _part_tables) in self.rest {
+        for (kind, part_sql, part_binds, _part_tables) in self.rest
+        {
             sql.push(' ');
             sql.push_str(kind.as_ref());
             sql.push(' ');
@@ -165,15 +192,18 @@ impl SqlBase for SqlSetOp {
             binds.extend(part_binds);
         }
 
-        if !self.order_by.is_empty() {
+        if !self.order_by.is_empty()
+        {
             sql.push_str(" ORDER BY ");
             sql.push_str(&self.order_by.join(", "));
         }
-        if let Some(limit) = self.limit {
+        if let Some(limit) = self.limit
+        {
             sql.push_str(" LIMIT $#");
             binds.push(SqlParam::I64(i64::try_from(limit).unwrap_or(i64::MAX)));
         }
-        if let Some(offset) = self.offset {
+        if let Some(offset) = self.offset
+        {
             sql.push_str(" OFFSET $#");
             binds.push(SqlParam::I64(i64::try_from(offset).unwrap_or(i64::MAX)));
         }
@@ -183,38 +213,46 @@ impl SqlBase for SqlSetOp {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::Table;
-    use crate::shared::expr::Expr;
-    use crate::{SqlCols, define_id};
+mod tests
+{
     use sqlx::FromRow;
+
+    use super::*;
+    use crate::{
+        SqlCols, define_id,
+        shared::{Table, expr::Expr},
+    };
 
     define_id!(TestId);
 
     #[derive(Debug, FromRow, SqlCols)]
     #[allow(dead_code)]
-    struct Users {
+    struct Users
+    {
         id: TestId,
         name: String,
         age: i32,
     }
 
-    impl Table for Users {
+    impl Table for Users
+    {
         type Col = UsersCol;
         type Id = TestId;
-        const TABLE_NAME: &'static str = "users";
+
         const PRIMARY_KEY: &'static str = "id";
+        const TABLE_NAME: &'static str = "users";
     }
 
-    fn build(set_op: SqlSetOp) -> (String, Vec<SqlParam>) {
+    fn build(set_op: SqlSetOp) -> (String, Vec<SqlParam>)
+    {
         let uq = SqlBase::build(set_op).unwrap();
         let bq = uq.bind();
         (bq.sql, bq.binds)
     }
 
     #[test]
-    fn union_two_selects() {
+    fn union_two_selects()
+    {
         let q1 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]);
         let q2 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("bob")]);
         let (sql, binds) = build(q1.union(q2));
@@ -226,7 +264,8 @@ mod tests {
     }
 
     #[test]
-    fn union_all() {
+    fn union_all()
+    {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, _) = build(q1.union_all(q2));
@@ -234,7 +273,8 @@ mod tests {
     }
 
     #[test]
-    fn intersect() {
+    fn intersect()
+    {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, _) = build(q1.intersect(q2));
@@ -242,7 +282,8 @@ mod tests {
     }
 
     #[test]
-    fn except() {
+    fn except()
+    {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, _) = build(q1.except(q2));
@@ -250,7 +291,8 @@ mod tests {
     }
 
     #[test]
-    fn union_different_bind_counts() {
+    fn union_different_bind_counts()
+    {
         let q1 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]);
         let q2 =
             SqlSelect::new::<Users>().filter([UsersCol::Name.eq("bob"), UsersCol::Age.gt(18i32)]);
@@ -270,7 +312,8 @@ mod tests {
     }
 
     #[test]
-    fn three_way_union() {
+    fn three_way_union()
+    {
         let q1 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("a")]);
         let q2 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("b")]);
         let q3 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("c")]);
@@ -290,7 +333,8 @@ mod tests {
     }
 
     #[test]
-    fn union_with_order_limit_offset() {
+    fn union_with_order_limit_offset()
+    {
         let q1 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("alice")]);
         let q2 = SqlSelect::new::<Users>().filter([UsersCol::Name.eq("bob")]);
         let (sql, binds) = build(
@@ -315,7 +359,8 @@ mod tests {
     }
 
     #[test]
-    fn union_no_binds() {
+    fn union_no_binds()
+    {
         let q1 = SqlSelect::new::<Users>();
         let q2 = SqlSelect::new::<Users>();
         let (sql, binds) = build(q1.union(q2));

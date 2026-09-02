@@ -1,1 +1,7 @@
 use_small_heuristics = "Max"
+reorder_imports = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
+brace_style = "AlwaysNextLine"
+control_brace_style = "AlwaysNextLine"
+reorder_impl_items = true

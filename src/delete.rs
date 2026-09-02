@@ -10,7 +10,8 @@ use crate::shared::{
 };
 
 /// Builder for SQL DELETE statements with filters and optional RETURNING clause.
-pub struct SqlDelete<T: Table> {
+pub struct SqlDelete<T: Table>
+{
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
     delete_all: bool,
@@ -19,12 +20,15 @@ pub struct SqlDelete<T: Table> {
     _t: PhantomData<T>,
 }
 
-impl<T: Table> SqlDelete<T> {
-    pub(super) const fn new() -> Self {
+impl<T: Table> SqlDelete<T>
+{
+    pub(super) const fn new() -> Self
+    {
         Self::new_with(vec![])
     }
 
-    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self {
+    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self
+    {
         Self {
             filters: Vec::new(),
             returning: Returning::None,
@@ -38,7 +42,8 @@ impl<T: Table> SqlDelete<T> {
     /// Opt in to deleting all rows without a WHERE clause.
     /// Required because `.build()` will error if neither `.filter()` nor
     /// `.delete_all()` is called — a safety guard against accidental full-table deletes.
-    pub const fn delete_all(mut self) -> Self {
+    pub const fn delete_all(mut self) -> Self
+    {
         self.delete_all = true;
         self
     }
@@ -50,39 +55,46 @@ impl<T: Table> SqlDelete<T> {
     ///     .using::<Users>()
     ///     .filter([OrdersCol::UserId.col().eq().column_of::<Users>(UsersCol::Id)])
     /// ```
-    pub fn using<U: Table>(mut self) -> Self {
+    pub fn using<U: Table>(mut self) -> Self
+    {
         self.using.push(U::TABLE_NAME);
         self
     }
 
     /// Adds WHERE conditions that are `ANDed` together.
-    pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self {
+    pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self
+    {
         self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self
+    {
         self.returning = Returning::columns(columns);
         self
     }
 
     /// Adds a RETURNING * clause to return all columns of deleted rows.
-    pub fn returning_all(mut self) -> Self {
+    pub fn returning_all(mut self) -> Self
+    {
         self.returning = Returning::All;
         self
     }
 
     /// Explicitly opts out of a RETURNING clause (fire-and-forget delete).
-    pub fn no_returning(mut self) -> Self {
+    pub fn no_returning(mut self) -> Self
+    {
         self.returning = Returning::None;
         self
     }
 
     /// # Errors
     /// Returns `sqlx::Error::Protocol` if neither `.filter()` nor `.delete_all()` was called.
-    pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error> {
-        if self.filters.is_empty() && !self.delete_all {
+    pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error>
+    {
+        if self.filters.is_empty() && !self.delete_all
+        {
             return Err(sqlx::Error::Protocol(
                 SqlQueryError::DeleteRequiresFilterOrDeleteAll.to_string(),
             ));
@@ -93,16 +105,20 @@ impl<T: Table> SqlDelete<T> {
         sql.push_str(T::TABLE_NAME);
         sql.push('"');
         let mut tables: Vec<&'static str> = vec![T::TABLE_NAME];
-        if !self.using.is_empty() {
+        if !self.using.is_empty()
+        {
             sql.push_str(" USING ");
-            for (i, table) in self.using.iter().enumerate() {
-                if i > 0 {
+            for (i, table) in self.using.iter().enumerate()
+            {
+                if i > 0
+                {
                     sql.push_str(", ");
                 }
                 sql.push('"');
                 sql.push_str(table);
                 sql.push('"');
-                if !tables.contains(table) {
+                if !tables.contains(table)
+                {
                     tables.push(*table);
                 }
             }
@@ -117,57 +133,67 @@ impl<T: Table> SqlDelete<T> {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
+    use sqlx::FromRow;
+
     use super::*;
     use crate::{SqlCols, define_id};
-    use sqlx::FromRow;
 
     define_id!(TestId);
 
     #[derive(Debug, FromRow, SqlCols)]
     #[allow(dead_code)]
-    struct Users {
+    struct Users
+    {
         id: TestId,
         name: String,
         age: i32,
     }
 
-    impl Table for Users {
+    impl Table for Users
+    {
         type Col = UsersCol;
         type Id = TestId;
-        const TABLE_NAME: &'static str = "users";
+
         const PRIMARY_KEY: &'static str = "id";
+        const TABLE_NAME: &'static str = "users";
     }
 
     type UExpr = Expr<Users>;
 
-    fn build(delete: SqlDelete<Users>) -> (String, Vec<SqlParam>) {
+    fn build(delete: SqlDelete<Users>) -> (String, Vec<SqlParam>)
+    {
         let bq = delete.build().unwrap().bind().skip_inval();
         (bq.sql, bq.binds)
     }
 
     #[test]
-    fn delete_all() {
+    fn delete_all()
+    {
         let (sql, binds) = build(SqlDelete::<Users>::new().delete_all());
         assert_eq!(sql, r#"DELETE FROM "users""#);
         assert!(binds.is_empty());
     }
 
     #[test]
-    fn delete_without_filter_or_delete_all_fails() {
+    fn delete_without_filter_or_delete_all_fails()
+    {
         let result = SqlDelete::<Users>::new().build();
         assert!(result.is_err());
     }
 
     #[test]
-    fn delete_with_filter() {
+    fn delete_with_filter()
+    {
         let (sql, binds) = build(SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice")]));
         assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1)"#);
         assert_eq!(binds, vec![SqlParam::String("alice".into())]);
     }
 
     #[test]
-    fn delete_with_multiple_filters() {
+    fn delete_with_multiple_filters()
+    {
         let (sql, binds) = build(
             SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice"), UsersCol::Age.gt(18i32)]),
         );
@@ -179,14 +205,16 @@ mod tests {
     }
 
     #[test]
-    fn delete_with_returning() {
+    fn delete_with_returning()
+    {
         let (sql, _) =
             build(SqlDelete::<Users>::new().filter([UsersCol::Name.eq("alice")]).returning_all());
         assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND ("users".name = $1) RETURNING *"#,);
     }
 
     #[test]
-    fn delete_with_or_filter() {
+    fn delete_with_or_filter()
+    {
         let (sql, binds) = build(
             SqlDelete::<Users>::new()
                 .filter([UsersCol::Name.eq("alice").or(UsersCol::Name.eq("bob"))]),
@@ -199,14 +227,16 @@ mod tests {
     }
 
     #[test]
-    fn delete_with_is_null() {
+    fn delete_with_is_null()
+    {
         let (sql, binds) = build(SqlDelete::<Users>::new().filter([UsersCol::Name.is_null()]));
         assert_eq!(sql, r#"DELETE FROM "users" WHERE 1=1 AND ("users".name IS NULL)"#);
         assert!(binds.is_empty());
     }
 
     #[test]
-    fn delete_with_subquery() {
+    fn delete_with_subquery()
+    {
         let sub = crate::select::SqlSelect::new::<Users>()
             .from([UExpr::new().column(UsersCol::Id)])
             .filter([UsersCol::Name.eq("alice")]);

@@ -19,7 +19,8 @@ type RowCell = Result<(String, Vec<SqlParam>), SqlQueryError>;
 type Row = Vec<RowCell>;
 
 /// Builder for SQL INSERT statements with conflict handling and optional RETURNING clause.
-pub struct SqlInsert<T: Table> {
+pub struct SqlInsert<T: Table>
+{
     columns: Vec<String>,
     rows: Vec<Row>,
     select_source: Option<(String, Vec<SqlParam>, Vec<&'static str>)>,
@@ -30,12 +31,15 @@ pub struct SqlInsert<T: Table> {
     _t: std::marker::PhantomData<T>,
 }
 
-impl<T: Table> SqlInsert<T> {
-    pub(super) const fn new() -> Self {
+impl<T: Table> SqlInsert<T>
+{
+    pub(super) const fn new() -> Self
+    {
         Self::new_with(vec![])
     }
 
-    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self {
+    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self
+    {
         Self {
             columns: Vec::new(),
             rows: Vec::new(),
@@ -48,7 +52,8 @@ impl<T: Table> SqlInsert<T> {
         }
     }
 
-    const fn has_source(&self) -> bool {
+    const fn has_source(&self) -> bool
+    {
         !self.columns.is_empty() || !self.rows.is_empty() || self.select_source.is_some()
     }
 
@@ -57,11 +62,11 @@ impl<T: Table> SqlInsert<T> {
     /// Pass expressions like `Col::Name.eq("alice")` — the column name is
     /// extracted from the left side of `=`, and the value from the right.
     /// Mutually exclusive with `.values_nested()` and `.from_select()`.
-    pub fn values(
-        mut self,
-        exprs: impl IntoIterator<Item = Expr<T>>,
-    ) -> Result<Self, SqlQueryError> {
-        if self.has_source() {
+    pub fn values(mut self, exprs: impl IntoIterator<Item = Expr<T>>)
+    -> Result<Self, SqlQueryError>
+    {
+        if self.has_source()
+        {
             return Err(SqlQueryError::InsertValuesAlreadySet);
         }
         let (cols, row) = Self::extract_row(exprs);
@@ -75,14 +80,18 @@ impl<T: Table> SqlInsert<T> {
     pub fn values_nested(
         mut self,
         rows: impl IntoIterator<Item = impl IntoIterator<Item = Expr<T>>>,
-    ) -> Result<Self, SqlQueryError> {
-        if self.has_source() {
+    ) -> Result<Self, SqlQueryError>
+    {
+        if self.has_source()
+        {
             return Err(SqlQueryError::InsertValuesAlreadySet);
         }
         let mut first = true;
-        for exprs in rows {
+        for exprs in rows
+        {
             let (cols, row) = Self::extract_row(exprs);
-            if first {
+            if first
+            {
                 self.columns = cols;
                 first = false;
             }
@@ -104,8 +113,10 @@ impl<T: Table> SqlInsert<T> {
         mut self,
         columns: impl IntoIterator<Item = T::Col>,
         select: SqlSelect,
-    ) -> Result<Self, SqlQueryError> {
-        if self.has_source() {
+    ) -> Result<Self, SqlQueryError>
+    {
+        if self.has_source()
+        {
             return Err(SqlQueryError::InsertSourceAlreadySet);
         }
         self.columns = columns.into_iter().map(|c| c.as_ref().to_string()).collect();
@@ -115,12 +126,15 @@ impl<T: Table> SqlInsert<T> {
         Ok(self)
     }
 
-    fn extract_row(exprs: impl IntoIterator<Item = Expr<T>>) -> (Vec<String>, Row) {
+    fn extract_row(exprs: impl IntoIterator<Item = Expr<T>>) -> (Vec<String>, Row)
+    {
         let mut cols = vec![];
         let mut row = vec![];
-        for expr in exprs {
+        for expr in exprs
+        {
             let (col, val_sql, binds) = expr.into_col_and_val();
-            if let Some(col) = col {
+            if let Some(col) = col
+            {
                 cols.push(col);
             }
             row.push(Ok((val_sql, binds)));
@@ -129,25 +143,29 @@ impl<T: Table> SqlInsert<T> {
     }
 
     /// Sets the ON CONFLICT resolution strategy for the insert.
-    pub fn on_conflict(mut self, conflict: SqlConflict<T::Col>) -> Self {
+    pub fn on_conflict(mut self, conflict: SqlConflict<T::Col>) -> Self
+    {
         self.on_conflict = Some(conflict);
         self
     }
 
     /// Adds a RETURNING clause for the specified columns.
-    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
+    pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self
+    {
         self.returning = Returning::columns(columns);
         self
     }
 
     /// Adds a RETURNING * clause to return all columns of inserted rows.
-    pub fn returning_all(mut self) -> Self {
+    pub fn returning_all(mut self) -> Self
+    {
         self.returning = Returning::All;
         self
     }
 
     /// Explicitly opts out of a RETURNING clause (fire-and-forget insert).
-    pub fn no_returning(mut self) -> Self {
+    pub fn no_returning(mut self) -> Self
+    {
         self.returning = Returning::None;
         self
     }
@@ -156,15 +174,18 @@ impl<T: Table> SqlInsert<T> {
     /// skipped). Null-only columns are dropped by default because `SqlParam::Null`
     /// encodes as `void`, which Postgres refuses to coerce into enum or other
     /// non-inferrable column types.
-    pub const fn include_nulls(mut self) -> Self {
+    pub const fn include_nulls(mut self) -> Self
+    {
         self.include_nulls = true;
         self
     }
 
     /// # Errors
     /// Returns `sqlx::Error::Protocol` if any value expression fails to compose.
-    pub fn build(mut self) -> Result<UnbindedWriteQuery, sqlx::Error> {
-        if !self.include_nulls && self.select_source.is_none() && !self.rows.is_empty() {
+    pub fn build(mut self) -> Result<UnbindedWriteQuery, sqlx::Error>
+    {
+        if !self.include_nulls && self.select_source.is_none() && !self.rows.is_empty()
+        {
             drop_null_only_columns(&mut self.columns, &mut self.rows);
         }
 
@@ -178,25 +199,36 @@ impl<T: Table> SqlInsert<T> {
         let mut tables: Vec<&'static str> = vec![T::TABLE_NAME];
         prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
 
-        if let Some((select_sql, select_binds, select_tables)) = self.select_source {
+        if let Some((select_sql, select_binds, select_tables)) = self.select_source
+        {
             sql.push(' ');
             sql.push_str(&select_sql);
             binds.extend(select_binds);
-            for t in select_tables {
-                if !tables.contains(&t) {
+            for t in select_tables
+            {
+                if !tables.contains(&t)
+                {
                     tables.push(t);
                 }
             }
-        } else {
-            for (i, row) in self.rows.into_iter().enumerate() {
-                if i == 0 {
+        }
+        else
+        {
+            for (i, row) in self.rows.into_iter().enumerate()
+            {
+                if i == 0
+                {
                     sql.push_str(" VALUES ");
-                } else {
+                }
+                else
+                {
                     sql.push_str(", ");
                 }
                 sql.push('(');
-                for (j, result) in row.into_iter().enumerate() {
-                    if j > 0 {
+                for (j, result) in row.into_iter().enumerate()
+                {
+                    if j > 0
+                    {
                         sql.push_str(", ");
                     }
                     let (val_sql, val_binds) =
@@ -208,15 +240,21 @@ impl<T: Table> SqlInsert<T> {
             }
         }
 
-        if let Some(conflict) = self.on_conflict {
-            match conflict {
-                SqlConflict::DoNothing => {
+        if let Some(conflict) = self.on_conflict
+        {
+            match conflict
+            {
+                SqlConflict::DoNothing =>
+                {
                     sql.push_str(" ON CONFLICT DO NOTHING");
                 }
-                SqlConflict::DoUpdate { conflict_cols, update_cols } => {
+                SqlConflict::DoUpdate { conflict_cols, update_cols } =>
+                {
                     sql.push_str(" ON CONFLICT (");
-                    for (i, c) in conflict_cols.iter().enumerate() {
-                        if i > 0 {
+                    for (i, c) in conflict_cols.iter().enumerate()
+                    {
+                        if i > 0
+                        {
                             sql.push_str(", ");
                         }
                         sql.push_str(c.as_ref());
@@ -224,7 +262,8 @@ impl<T: Table> SqlInsert<T> {
                     sql.push_str(") DO UPDATE SET ");
                     push_excluded_sets(&mut sql, &update_cols);
                 }
-                SqlConflict::OnConstraint { name, update_cols } => {
+                SqlConflict::OnConstraint { name, update_cols } =>
+                {
                     sql.push_str(" ON CONFLICT ON CONSTRAINT ");
                     sql.push_str(name);
                     sql.push_str(" DO UPDATE SET ");
@@ -239,25 +278,33 @@ impl<T: Table> SqlInsert<T> {
 }
 
 #[allow(clippy::ptr_arg)] // both args mutated via Vec::retain, slices won't do
-fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>) {
+fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>)
+{
     let mut keep = vec![false; columns.len()];
-    for row in rows.iter() {
-        for (i, cell) in row.iter().enumerate() {
-            if keep.get(i).copied().unwrap_or(true) {
+    for row in rows.iter()
+    {
+        for (i, cell) in row.iter().enumerate()
+        {
+            if keep.get(i).copied().unwrap_or(true)
+            {
                 continue;
             }
-            let has_value = match cell {
-                Ok((_, binds)) => {
+            let has_value = match cell
+            {
+                Ok((_, binds)) =>
+                {
                     binds.is_empty() || binds.iter().any(|b| !matches!(b, SqlParam::Null))
                 }
                 Err(_) => true,
             };
-            if has_value {
+            if has_value
+            {
                 keep[i] = true;
             }
         }
     }
-    if keep.iter().all(|k| *k) {
+    if keep.iter().all(|k| *k)
+    {
         return;
     }
     let mut idx = 0;
@@ -266,7 +313,8 @@ fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>) {
         idx += 1;
         k
     });
-    for row in rows.iter_mut() {
+    for row in rows.iter_mut()
+    {
         let mut idx = 0;
         row.retain(|_| {
             let k = keep[idx];
@@ -276,9 +324,12 @@ fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>) {
     }
 }
 
-fn push_excluded_sets<C: AsRef<str>>(sql: &mut String, cols: &[C]) {
-    for (i, c) in cols.iter().enumerate() {
-        if i > 0 {
+fn push_excluded_sets<C: AsRef<str>>(sql: &mut String, cols: &[C])
+{
+    for (i, c) in cols.iter().enumerate()
+    {
+        if i > 0
+        {
             sql.push_str(", ");
         }
         let c = c.as_ref();
@@ -289,35 +340,42 @@ fn push_excluded_sets<C: AsRef<str>>(sql: &mut String, cols: &[C]) {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
+    use sqlx::FromRow;
+
     use super::*;
     use crate::{SqlCols, define_id};
-    use sqlx::FromRow;
 
     define_id!(TestId);
 
     #[derive(Debug, FromRow, SqlCols)]
     #[allow(dead_code)]
-    struct Users {
+    struct Users
+    {
         id: TestId,
         name: String,
         age: i32,
     }
 
-    impl Table for Users {
+    impl Table for Users
+    {
         type Col = UsersCol;
         type Id = TestId;
-        const TABLE_NAME: &'static str = "users";
+
         const PRIMARY_KEY: &'static str = "id";
+        const TABLE_NAME: &'static str = "users";
     }
 
-    fn build(insert: SqlInsert<Users>) -> (String, Vec<SqlParam>) {
+    fn build(insert: SqlInsert<Users>) -> (String, Vec<SqlParam>)
+    {
         let bq = insert.build().unwrap().bind().skip_inval();
         (bq.sql, bq.binds)
     }
 
     #[test]
-    fn insert_single_row() {
+    fn insert_single_row()
+    {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
@@ -328,7 +386,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_multiple_rows() {
+    fn insert_multiple_rows()
+    {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values_nested([
@@ -350,7 +409,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_with_returning() {
+    fn insert_with_returning()
+    {
         let (sql, _) = build(
             SqlInsert::<Users>::new().values([UsersCol::Name.eq("alice")]).unwrap().returning_all(),
         );
@@ -358,7 +418,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_on_conflict_do_nothing() {
+    fn insert_on_conflict_do_nothing()
+    {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice")])
@@ -369,7 +430,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_on_conflict_do_update() {
+    fn insert_on_conflict_do_update()
+    {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
@@ -386,7 +448,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_on_conflict_on_constraint() {
+    fn insert_on_conflict_on_constraint()
+    {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
@@ -403,7 +466,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_on_conflict_with_returning() {
+    fn insert_on_conflict_with_returning()
+    {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)])
@@ -422,7 +486,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_skips_null_only_columns_by_default() {
+    fn insert_skips_null_only_columns_by_default()
+    {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
@@ -433,7 +498,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_include_nulls() {
+    fn insert_include_nulls()
+    {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
@@ -445,7 +511,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_nested_drops_null_only_columns() {
+    fn insert_nested_drops_null_only_columns()
+    {
         let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values_nested([
@@ -459,7 +526,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_nested_keeps_column_if_any_row_has_value() {
+    fn insert_nested_keeps_column_if_any_row_has_value()
+    {
         let (sql, _) = build(
             SqlInsert::<Users>::new()
                 .values_nested([
@@ -472,7 +540,8 @@ mod tests {
     }
 
     #[test]
-    fn err_values_called_twice() {
+    fn err_values_called_twice()
+    {
         let result = SqlInsert::<Users>::new()
             .values([UsersCol::Name.eq("alice")])
             .unwrap()
@@ -481,7 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn err_values_nested_after_values() {
+    fn err_values_nested_after_values()
+    {
         let result = SqlInsert::<Users>::new()
             .values([UsersCol::Name.eq("alice")])
             .unwrap()
@@ -492,7 +562,8 @@ mod tests {
     type UExpr = Expr<Users>;
 
     #[test]
-    fn insert_from_select() {
+    fn insert_from_select()
+    {
         let select = crate::select::SqlSelect::new::<Users>()
             .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)])
             .filter([UsersCol::Age.gt(18i32)]);
@@ -507,7 +578,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_from_select_on_conflict() {
+    fn insert_from_select_on_conflict()
+    {
         let select = crate::select::SqlSelect::new::<Users>()
             .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)])
             .filter([UsersCol::Age.gt(18i32)]);
@@ -524,7 +596,8 @@ mod tests {
     }
 
     #[test]
-    fn insert_from_select_returning() {
+    fn insert_from_select_returning()
+    {
         let select = crate::select::SqlSelect::new::<Users>()
             .from([UExpr::new().column(UsersCol::Name), UExpr::new().column(UsersCol::Age)]);
         let (sql, _) = build(
@@ -540,7 +613,8 @@ mod tests {
     }
 
     #[test]
-    fn err_from_select_after_values() {
+    fn err_from_select_after_values()
+    {
         let select =
             crate::select::SqlSelect::new::<Users>().from([UExpr::new().column(UsersCol::Name)]);
         let result = SqlInsert::<Users>::new()
@@ -551,7 +625,8 @@ mod tests {
     }
 
     #[test]
-    fn err_values_after_from_select() {
+    fn err_values_after_from_select()
+    {
         let select =
             crate::select::SqlSelect::new::<Users>().from([UExpr::new().column(UsersCol::Name)]);
         let result = SqlInsert::<Users>::new()

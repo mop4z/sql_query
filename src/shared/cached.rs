@@ -1,5 +1,4 @@
-use std::fmt::Write;
-use std::future::Future;
+use std::{fmt::Write, future::Future};
 
 use redis::{AsyncCommands, Script};
 use serde::{Serialize, de::DeserializeOwned};
@@ -21,7 +20,8 @@ use crate::shared::value::SqlParam;
 ///     }
 /// }
 /// ```
-pub trait CacheTag {
+pub trait CacheTag
+{
     fn tables(&self) -> &[&'static str];
 }
 
@@ -33,12 +33,14 @@ pub trait CacheTag {
 /// formatting, no intermediate `String`). `Json` / `Custom` variants share a
 /// reusable scratch buffer for their fallback debug-string path.
 #[must_use]
-pub fn cache_key(sql: &str, binds: &[SqlParam]) -> String {
+pub fn cache_key(sql: &str, binds: &[SqlParam]) -> String
+{
     let mut h = Xxh3::new();
     h.update(sql.as_bytes());
     h.update(&(binds.len() as u64).to_le_bytes());
     let mut scratch = String::new();
-    for b in binds {
+    for b in binds
+    {
         b.hash_into(&mut h, &mut scratch);
     }
     let hash = h.digest();
@@ -48,7 +50,8 @@ pub fn cache_key(sql: &str, binds: &[SqlParam]) -> String {
 }
 
 /// Builds the per-table reverse-index key for invalidation lookups.
-fn table_key(table: &str) -> String {
+fn table_key(table: &str) -> String
+{
     let mut s = String::with_capacity(5 + table.len());
     s.push_str("sq:t:");
     s.push_str(table);
@@ -82,9 +85,11 @@ where
     tracing::debug!("MISS {key} {sql}");
     let result = fetch().await?;
 
-    if let Ok(json) = serde_json::to_string(&result) {
+    if let Ok(json) = serde_json::to_string(&result)
+    {
         let _: Result<(), _> = redis.set_ex::<_, _, ()>(key, &json, ttl).await;
-        for t in tables {
+        for t in tables
+        {
             let _: Result<(), _> = redis.sadd::<_, _, ()>(table_key(t), key).await;
         }
     }
@@ -99,8 +104,10 @@ where
 pub async fn invalidate_tables(
     tables: &[&'static str],
     redis: &mut redis::aio::MultiplexedConnection,
-) -> Result<(), sqlx::Error> {
-    if tables.is_empty() {
+) -> Result<(), sqlx::Error>
+{
+    if tables.is_empty()
+    {
         return Ok(());
     }
     let script = Script::new(
@@ -116,7 +123,8 @@ pub async fn invalidate_tables(
         ",
     );
     let mut invocation = script.prepare_invoke();
-    for t in tables {
+    for t in tables
+    {
         invocation.key(table_key(t));
     }
     invocation
