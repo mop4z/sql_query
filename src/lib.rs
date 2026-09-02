@@ -11,9 +11,10 @@
 
 extern crate self as sql_query;
 
-use crate::{delete::SqlDelete, insert::SqlInsert, shared::Cte, update::SqlUpdate};
+use crate::shared::Cte;
 
 pub use select::SqlSelect;
+pub use {delete::SqlDelete, insert::SqlInsert, update::SqlUpdate};
 pub use set_op::SqlSetOp;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
