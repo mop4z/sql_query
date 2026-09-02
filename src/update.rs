@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{borrow::Cow, marker::PhantomData};
 
 use crate::shared::{
     Cte, Returning, Table,
@@ -12,10 +12,11 @@ use crate::shared::{
 /// Builder for SQL UPDATE statements with SET, FROM, filters, and optional RETURNING clause.
 pub struct SqlUpdate<T: Table> {
     set_clauses: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
-    from_tables: Vec<String>,
+    /// `Err` = a `from_subquery` whose build failed; surfaced by `.build()`.
+    from_tables: Vec<Result<Cow<'static, str>, sqlx::Error>>,
     from_binds: Vec<SqlParam>,
-    /// Static tables touched by this update (target table + any FROM tables /
-    /// FROM-subquery tables / CTE tables). Drives invalidation reach.
+    /// Static tables touched beyond the target (FROM tables / FROM-subquery
+    /// tables / CTE tables). Target is prepended at build. Drives invalidation reach.
     tables: Vec<&'static str>,
     filters: Vec<Result<(String, Vec<SqlParam>), SqlQueryError>>,
     returning: Returning,
@@ -25,16 +26,16 @@ pub struct SqlUpdate<T: Table> {
 }
 
 impl<T: Table> SqlUpdate<T> {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self::new_with(vec![])
     }
 
-    pub(super) fn new_with(ctes: Vec<Cte>) -> Self {
+    pub(super) const fn new_with(ctes: Vec<Cte>) -> Self {
         Self {
             set_clauses: Vec::new(),
             from_tables: Vec::new(),
             from_binds: Vec::new(),
-            tables: vec![T::TABLE_NAME],
+            tables: Vec::new(),
             filters: Vec::new(),
             returning: Returning::None,
             ctes,
@@ -44,13 +45,13 @@ impl<T: Table> SqlUpdate<T> {
     }
 
     fn add_table(&mut self, t: &'static str) {
-        if !self.tables.contains(&t) {
+        if t != T::TABLE_NAME && !self.tables.contains(&t) {
             self.tables.push(t);
         }
     }
 
     /// Add `SET col = val` clauses. Pass `Col::Name.eq(val)` expressions,
-    /// or use `Expr::new().column(col).eq().now()` for computed values.
+    /// or use `Expr::new().column(col).eq(Expr::new().now())` for computed values.
     pub fn set(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self {
         self.set_clauses.extend(exprs.into_iter().map(super::shared::expr::EvalExpr::eval));
         self
@@ -59,27 +60,30 @@ impl<T: Table> SqlUpdate<T> {
     /// Add a `FROM "table"` clause for multi-table updates (Postgres-specific).
     /// Allows referencing columns from another table in SET and WHERE clauses.
     pub fn from<F: Table>(mut self) -> Self {
-        let mut s = String::with_capacity(F::TABLE_NAME.len() + 2);
-        s.push('"');
-        s.push_str(F::TABLE_NAME);
-        s.push('"');
-        self.from_tables.push(s);
+        self.from_tables.push(Ok(Cow::Borrowed(F::TABLE_NAME)));
         self.add_table(F::TABLE_NAME);
         self
     }
 
     /// Add a `FROM (subquery) alias` clause for referencing a subquery in SET/WHERE.
+    /// A subquery that fails to build surfaces as `Err` from `.build()`.
     #[must_use]
     #[allow(clippy::wrong_self_convention)]
     pub fn from_subquery(mut self, alias: &str, query: impl crate::SqlBase) -> Self {
-        let uq = query.build().expect("from_subquery build failed");
+        let uq = match query.build() {
+            Ok(uq) => uq,
+            Err(e) => {
+                self.from_tables.push(Err(e));
+                return self;
+            }
+        };
         let (sub_sql, sub_binds, sub_tables) = uq.into_raw_with_tables();
         let mut s = String::with_capacity(sub_sql.len() + alias.len() + 4);
         s.push('(');
         s.push_str(&sub_sql);
         s.push_str(") ");
         s.push_str(alias);
-        self.from_tables.push(s);
+        self.from_tables.push(Ok(Cow::Owned(s)));
         self.from_binds.extend(sub_binds);
         for t in sub_tables {
             self.add_table(t);
@@ -95,8 +99,7 @@ impl<T: Table> SqlUpdate<T> {
 
     /// Adds a RETURNING clause for the specified columns.
     pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
-        let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
-        self.returning = Returning::Columns(cols);
+        self.returning = Returning::columns(columns);
         self
     }
 
@@ -121,25 +124,25 @@ impl<T: Table> SqlUpdate<T> {
     /// Returns true if at least one SET clause with a non-null value has been added.
     pub fn has_non_null_sets(&self) -> bool {
         self.set_clauses.iter().any(|r| {
-            r.as_ref()
-                .map(|(_, binds)| binds.iter().any(|b| !matches!(b, SqlParam::Null)))
-                .unwrap_or(false)
+            r.as_ref().is_ok_and(|(_, binds)| binds.iter().any(|b| !matches!(b, SqlParam::Null)))
         })
     }
 
     /// # Errors
-    /// Returns `sqlx::Error::Protocol` if any SET or filter expression fails to compose.
+    /// Returns `sqlx::Error::Protocol` if any SET, filter, or RETURNING expression
+    /// fails to compose, or propagates a failed `from_subquery` build.
     pub fn build(self) -> Result<UnbindedWriteQuery, sqlx::Error> {
         let mut sql = String::with_capacity(128);
         sql.push_str("UPDATE \"");
         sql.push_str(T::TABLE_NAME);
         sql.push_str("\" SET ");
         let mut binds = vec![];
-        let mut tables = self.tables;
+        let mut tables = Vec::with_capacity(self.tables.len() + 1);
+        tables.push(T::TABLE_NAME);
+        tables.extend(self.tables);
         prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
 
         let include_nulls = self.include_nulls;
-        let target_prefix = format!("\"{}\".", T::TABLE_NAME);
         let mut set_count = 0;
         for result in self.set_clauses {
             let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
@@ -154,7 +157,11 @@ impl<T: Table> SqlUpdate<T> {
             }
             // Postgres rejects qualified SET targets ("table".col = ...) —
             // strip the target-table prefix from the LHS if present.
-            let clause = clause.strip_prefix(&target_prefix).unwrap_or(&clause);
+            let clause = clause
+                .strip_prefix('"')
+                .and_then(|c| c.strip_prefix(T::TABLE_NAME))
+                .and_then(|c| c.strip_prefix("\"."))
+                .unwrap_or(&clause);
             sql.push_str(clause);
             binds.extend(params);
             set_count += 1;
@@ -162,12 +169,24 @@ impl<T: Table> SqlUpdate<T> {
 
         if !self.from_tables.is_empty() {
             sql.push_str(" FROM ");
-            sql.push_str(&self.from_tables.join(", "));
+            for (i, ft) in self.from_tables.into_iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                match ft? {
+                    Cow::Borrowed(table) => {
+                        sql.push('"');
+                        sql.push_str(table);
+                        sql.push('"');
+                    }
+                    Cow::Owned(subquery) => sql.push_str(&subquery),
+                }
+            }
             binds.extend(self.from_binds);
         }
 
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
-        push_returning(self.returning, &mut sql);
+        push_returning(self.returning, &mut sql)?;
 
         Ok(UnbindedWriteQuery { sql, binds, tables })
     }

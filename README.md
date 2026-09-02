@@ -323,7 +323,7 @@ SqlQ::insert::<Users>()
 // RETURNING *
 .returning_all()
 
-// RETURNING specific columns
+// RETURNING specific columns — a malformed expr surfaces as Err from .build()
 .returning([UC::Id, UC::Name])
 ```
 
@@ -362,7 +362,7 @@ SqlQ::update::<Users>()
     .from::<Posts>()
     .filter([UC::Id.eq(1i32), PostsCol::Title.eq("hello").coerce::<Users>()])
 
-// FROM a subquery
+// FROM a subquery — a subquery that fails to build surfaces as Err from .build()
 SqlQ::update::<Users>()
     .set([UC::Name.eq("updated")])
     .from_subquery("sub", SqlQ::select::<Posts>().filter([...]))

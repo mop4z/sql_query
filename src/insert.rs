@@ -136,8 +136,7 @@ impl<T: Table> SqlInsert<T> {
 
     /// Adds a RETURNING clause for the specified columns.
     pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
-        let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
-        self.returning = Returning::Columns(cols);
+        self.returning = Returning::columns(columns);
         self
     }
 
@@ -234,7 +233,7 @@ impl<T: Table> SqlInsert<T> {
             }
         }
 
-        push_returning(self.returning, &mut sql);
+        push_returning(self.returning, &mut sql)?;
         Ok(UnbindedWriteQuery { sql, binds, tables })
     }
 }

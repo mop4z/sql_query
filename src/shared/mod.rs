@@ -78,10 +78,20 @@ pub fn prepend_ctes(
 pub enum Returning {
     None,
     All,
-    Columns(Vec<String>),
+    Columns(Vec<Result<String, error::SqlQueryError>>),
 }
 
-pub fn push_returning(returning: Returning, sql: &mut String) {
+impl Returning {
+    /// Column exprs are evaluated eagerly at `.returning()` but errors are
+    /// deferred to `.build()` so the builder chain stays infallible.
+    pub fn columns(cols: impl IntoIterator<Item = impl expr::EvalExpr>) -> Self {
+        Self::Columns(cols.into_iter().map(|c| c.eval().map(|(sql, _)| sql)).collect())
+    }
+}
+
+/// # Errors
+/// Returns `sqlx::Error::Protocol` if any RETURNING expression failed to compose.
+pub fn push_returning(returning: Returning, sql: &mut String) -> Result<(), sqlx::Error> {
     match returning {
         Returning::None => {}
         Returning::All => {
@@ -89,14 +99,15 @@ pub fn push_returning(returning: Returning, sql: &mut String) {
         }
         Returning::Columns(cols) => {
             sql.push_str(" RETURNING ");
-            for (i, col) in cols.iter().enumerate() {
+            for (i, col) in cols.into_iter().enumerate() {
                 if i > 0 {
                     sql.push_str(", ");
                 }
-                sql.push_str(col);
+                sql.push_str(&col.map_err(|e| sqlx::Error::Protocol(e.to_string()))?);
             }
         }
     }
+    Ok(())
 }
 
 /// Maps a Rust struct to a Postgres table.

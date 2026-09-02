@@ -63,8 +63,7 @@ impl<T: Table> SqlDelete<T> {
 
     /// Adds a RETURNING clause for the specified columns.
     pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self {
-        let cols: Vec<String> = columns.into_iter().map(|c| c.eval().unwrap().0).collect();
-        self.returning = Returning::Columns(cols);
+        self.returning = Returning::columns(columns);
         self
     }
 
@@ -111,7 +110,7 @@ impl<T: Table> SqlDelete<T> {
         let mut binds = vec![];
         prepend_ctes(self.ctes, &mut sql, &mut binds, &mut tables);
         push_conditions("WHERE", self.filters, &mut sql, &mut binds)?;
-        push_returning(self.returning, &mut sql);
+        push_returning(self.returning, &mut sql)?;
 
         Ok(UnbindedWriteQuery { sql, binds, tables })
     }

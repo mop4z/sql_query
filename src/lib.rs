@@ -112,7 +112,7 @@ impl SqlQ {
 
     /// Start an `UPDATE "T"` builder.
     #[must_use]
-    pub fn update<T: Table>() -> SqlUpdate<T> {
+    pub const fn update<T: Table>() -> SqlUpdate<T> {
         SqlUpdate::new()
     }
 
