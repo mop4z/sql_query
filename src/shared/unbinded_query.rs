@@ -27,7 +27,6 @@ pub struct UnbindedQuery {
 pub struct BoundQuery {
     pub(crate) sql: String,
     pub(crate) binds: Vec<SqlParam>,
-    pub(crate) tables: Vec<&'static str>,
 }
 
 /// A finalized query that deserializes each row into `T` via `FromRow`.
@@ -236,7 +235,7 @@ impl UnbindedQuery {
     #[must_use]
     pub fn bind(self) -> BoundQuery {
         let sql = renumber_placeholders(&self.sql);
-        BoundQuery { sql, binds: self.binds, tables: self.tables }
+        BoundQuery { sql, binds: self.binds }
     }
 
     #[must_use]
@@ -269,10 +268,6 @@ impl UnbindedWriteQuery {
     #[must_use]
     pub fn into_raw(self) -> (String, Vec<SqlParam>) {
         (self.sql, self.binds)
-    }
-
-    pub(crate) fn into_raw_with_tables(self) -> (String, Vec<SqlParam>, Vec<&'static str>) {
-        (self.sql, self.binds, self.tables)
     }
 
     #[must_use]
@@ -658,7 +653,7 @@ impl InvalidatingBoundQuery {
     /// that does not require a Redis connection.
     #[must_use]
     pub fn skip_inval(self) -> BoundQuery {
-        BoundQuery { sql: self.sql, binds: self.binds, tables: self.tables }
+        BoundQuery { sql: self.sql, binds: self.binds }
     }
 
     /// Merges additional tables from a `CacheTag` into this query's
