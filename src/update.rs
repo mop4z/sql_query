@@ -58,6 +58,7 @@ impl<T: Table> SqlUpdate<T>
 
     /// Add `SET col = val` clauses. Pass `Col::Name.eq(val)` expressions,
     /// or use `Expr::new().column(col).eq(Expr::new().now())` for computed values.
+    #[must_use]
     pub fn set(mut self, exprs: impl IntoIterator<Item = Expr<T>>) -> Self
     {
         self.set_clauses.extend(exprs.into_iter().map(super::shared::expr::EvalExpr::eval));
@@ -66,6 +67,7 @@ impl<T: Table> SqlUpdate<T>
 
     /// Add a `FROM "table"` clause for multi-table updates (Postgres-specific).
     /// Allows referencing columns from another table in SET and WHERE clauses.
+    #[must_use]
     pub fn from<F: Table>(mut self) -> Self
     {
         self.from_tables.push(Ok(Cow::Borrowed(F::TABLE_NAME)));
@@ -104,6 +106,7 @@ impl<T: Table> SqlUpdate<T>
     }
 
     /// Adds WHERE conditions that are `ANDed` together.
+    #[must_use]
     pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self
     {
         self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
@@ -111,6 +114,7 @@ impl<T: Table> SqlUpdate<T>
     }
 
     /// Adds a RETURNING clause for the specified columns.
+    #[must_use]
     pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self
     {
         self.returning = Returning::columns(columns);
@@ -118,6 +122,7 @@ impl<T: Table> SqlUpdate<T>
     }
 
     /// Adds a RETURNING * clause to return all columns of updated rows.
+    #[must_use]
     pub fn returning_all(mut self) -> Self
     {
         self.returning = Returning::All;
@@ -125,6 +130,7 @@ impl<T: Table> SqlUpdate<T>
     }
 
     /// Explicitly opts out of a RETURNING clause (fire-and-forget update).
+    #[must_use]
     pub fn no_returning(mut self) -> Self
     {
         self.returning = Returning::None;
@@ -132,6 +138,7 @@ impl<T: Table> SqlUpdate<T>
     }
 
     /// Forces SET clauses with NULL values to be included (normally skipped).
+    #[must_use]
     pub const fn include_nulls(mut self) -> Self
     {
         self.include_nulls = true;
@@ -139,6 +146,7 @@ impl<T: Table> SqlUpdate<T>
     }
 
     /// Returns true if at least one SET clause with a non-null value has been added.
+    #[must_use]
     pub fn has_non_null_sets(&self) -> bool
     {
         self.set_clauses.iter().any(|r| {

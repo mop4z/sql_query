@@ -42,6 +42,7 @@ impl<T: Table> SqlDelete<T>
     /// Opt in to deleting all rows without a WHERE clause.
     /// Required because `.build()` will error if neither `.filter()` nor
     /// `.delete_all()` is called — a safety guard against accidental full-table deletes.
+    #[must_use]
     pub const fn delete_all(mut self) -> Self
     {
         self.delete_all = true;
@@ -55,6 +56,7 @@ impl<T: Table> SqlDelete<T>
     ///     .using::<Users>()
     ///     .filter([OrdersCol::UserId.col().eq().column_of::<Users>(UsersCol::Id)])
     /// ```
+    #[must_use]
     pub fn using<U: Table>(mut self) -> Self
     {
         self.using.push(U::TABLE_NAME);
@@ -62,6 +64,7 @@ impl<T: Table> SqlDelete<T>
     }
 
     /// Adds WHERE conditions that are `ANDed` together.
+    #[must_use]
     pub fn filter(mut self, filters: impl IntoIterator<Item = Expr<T>>) -> Self
     {
         self.filters.extend(filters.into_iter().map(super::shared::expr::EvalExpr::eval));
@@ -69,6 +72,7 @@ impl<T: Table> SqlDelete<T>
     }
 
     /// Adds a RETURNING clause for the specified columns.
+    #[must_use]
     pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self
     {
         self.returning = Returning::columns(columns);
@@ -76,6 +80,7 @@ impl<T: Table> SqlDelete<T>
     }
 
     /// Adds a RETURNING * clause to return all columns of deleted rows.
+    #[must_use]
     pub fn returning_all(mut self) -> Self
     {
         self.returning = Returning::All;
@@ -83,6 +88,7 @@ impl<T: Table> SqlDelete<T>
     }
 
     /// Explicitly opts out of a RETURNING clause (fire-and-forget delete).
+    #[must_use]
     pub fn no_returning(mut self) -> Self
     {
         self.returning = Returning::None;

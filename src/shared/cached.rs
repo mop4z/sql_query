@@ -101,6 +101,9 @@ where
 /// One Lua round-trip: walks each `sq:t:{table}` set, DELs each member entry,
 /// then DELs the set itself. Errors bubble — write succeeded but cache may be
 /// stale, caller needs to know.
+///
+/// # Errors
+/// Returns `sqlx::Error::Protocol` if the Redis invalidation script fails.
 pub async fn invalidate_tables(
     tables: &[&'static str],
     redis: &mut redis::aio::MultiplexedConnection,

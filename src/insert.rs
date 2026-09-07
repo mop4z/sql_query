@@ -62,6 +62,9 @@ impl<T: Table> SqlInsert<T>
     /// Pass expressions like `Col::Name.eq("alice")` — the column name is
     /// extracted from the left side of `=`, and the value from the right.
     /// Mutually exclusive with `.values_nested()` and `.from_select()`.
+    ///
+    /// # Errors
+    /// Returns `SqlQueryError::InsertValuesAlreadySet` if a value source has already been set.
     pub fn values(mut self, exprs: impl IntoIterator<Item = Expr<T>>)
     -> Result<Self, SqlQueryError>
     {
@@ -77,6 +80,9 @@ impl<T: Table> SqlInsert<T>
 
     /// Set column-value pairs for a multi-row `INSERT INTO ... VALUES (...), (...)`.
     /// Mutually exclusive with `.values()` and `.from_select()`.
+    ///
+    /// # Errors
+    /// Returns `SqlQueryError::InsertValuesAlreadySet` if a value source has already been set.
     pub fn values_nested(
         mut self,
         rows: impl IntoIterator<Item = impl IntoIterator<Item = Expr<T>>>,
@@ -108,6 +114,10 @@ impl<T: Table> SqlInsert<T>
     ///
     /// # Errors
     /// Returns `SqlQueryError::InsertSourceAlreadySet` if a value source has already been set.
+    ///
+    /// # Panics
+    /// Panics if `select` fails to build (a filter or HAVING expression that
+    /// failed to compose).
     #[allow(clippy::wrong_self_convention)]
     pub fn from_select(
         mut self,
@@ -143,6 +153,7 @@ impl<T: Table> SqlInsert<T>
     }
 
     /// Sets the ON CONFLICT resolution strategy for the insert.
+    #[must_use]
     pub fn on_conflict(mut self, conflict: SqlConflict<T::Col>) -> Self
     {
         self.on_conflict = Some(conflict);
@@ -150,6 +161,7 @@ impl<T: Table> SqlInsert<T>
     }
 
     /// Adds a RETURNING clause for the specified columns.
+    #[must_use]
     pub fn returning(mut self, columns: impl IntoIterator<Item = impl EvalExpr>) -> Self
     {
         self.returning = Returning::columns(columns);
@@ -157,6 +169,7 @@ impl<T: Table> SqlInsert<T>
     }
 
     /// Adds a RETURNING * clause to return all columns of inserted rows.
+    #[must_use]
     pub fn returning_all(mut self) -> Self
     {
         self.returning = Returning::All;
@@ -164,6 +177,7 @@ impl<T: Table> SqlInsert<T>
     }
 
     /// Explicitly opts out of a RETURNING clause (fire-and-forget insert).
+    #[must_use]
     pub fn no_returning(mut self) -> Self
     {
         self.returning = Returning::None;
@@ -174,6 +188,7 @@ impl<T: Table> SqlInsert<T>
     /// skipped). Null-only columns are dropped by default because `SqlParam::Null`
     /// encodes as `void`, which Postgres refuses to coerce into enum or other
     /// non-inferrable column types.
+    #[must_use]
     pub const fn include_nulls(mut self) -> Self
     {
         self.include_nulls = true;

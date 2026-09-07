@@ -507,6 +507,7 @@ where
         self
     }
 
+    #[must_use]
     pub fn ttl(mut self, ttl: u64) -> Self
     {
         self.ttl = ttl;
@@ -659,6 +660,7 @@ where
         self
     }
 
+    #[must_use]
     pub fn ttl(mut self, ttl: u64) -> Self
     {
         self.ttl = ttl;
