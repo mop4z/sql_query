@@ -74,6 +74,14 @@ impl SqlSelect
         }
     }
 
+    /// The `FROM` table this select was started on. Joins, lateral subqueries,
+    /// and CTEs do not change it.
+    #[must_use]
+    pub const fn table(&self) -> &'static str
+    {
+        self.table
+    }
+
     /// # Panics
     /// Panics if any sub-expression fails to evaluate or build (`.eval().unwrap()` / `.build().expect()`).
     /// Set the SELECT column list. Omit to select `*`.
@@ -978,5 +986,22 @@ mod tests
             r#"WITH active AS (SELECT * FROM "users" WHERE 1=1 AND ("users".name = $1)) SELECT * FROM "users" WHERE 1=1 AND ("users".age = $2)"#,
         );
         assert_eq!(binds, vec![SqlParam::String("alice".into()), SqlParam::I32(30)]);
+    }
+
+    #[test]
+    fn select_table_is_the_from_table()
+    {
+        assert_eq!(SqlSelect::new::<Users>().table(), "users");
+    }
+
+    #[test]
+    fn select_table_ignores_joins()
+    {
+        let q = SqlSelect::new::<Users>().join::<Posts, Users>(
+            SqlJoin::Left,
+            PostsCol::UserId.col(),
+            UsersCol::Id.col(),
+        );
+        assert_eq!(q.table(), "users");
     }
 }

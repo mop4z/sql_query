@@ -146,6 +146,42 @@ impl<T: Table> SqlUpdate<T>
         })
     }
 
+    /// Column names in SET order, for an audit row that says what changed.
+    ///
+    /// Mirrors what `.build()` emits: NULL-only sets are skipped unless
+    /// [`include_nulls`](Self::include_nulls) was called, and clauses that
+    /// failed to compose are omitted here (`.build()` surfaces them as `Err`).
+    #[must_use]
+    pub fn set_columns(&self) -> Vec<&str>
+    {
+        self.set_clauses
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .filter(|(_, params)| self.include_nulls || !Self::is_null_set(params))
+            .map(|(clause, _)| {
+                let clause = Self::strip_target_prefix(clause);
+                clause.split_once(" = ").map_or(clause, |(col, _)| col)
+            })
+            .collect()
+    }
+
+    /// A SET clause whose every bind is NULL; skipped by default.
+    fn is_null_set(params: &[SqlParam]) -> bool
+    {
+        !params.is_empty() && params.iter().all(|b| matches!(b, SqlParam::Null))
+    }
+
+    /// Postgres rejects qualified SET targets (`"table".col = ...`) —
+    /// strip the target-table prefix from the LHS if present.
+    fn strip_target_prefix(clause: &str) -> &str
+    {
+        clause
+            .strip_prefix('"')
+            .and_then(|c| c.strip_prefix(T::TABLE_NAME))
+            .and_then(|c| c.strip_prefix("\"."))
+            .unwrap_or(clause)
+    }
+
     /// # Errors
     /// Returns `sqlx::Error::Protocol` if any SET, filter, or RETURNING expression
     /// fails to compose, or propagates a failed `from_subquery` build.
@@ -166,9 +202,7 @@ impl<T: Table> SqlUpdate<T>
         for result in self.set_clauses
         {
             let (clause, params) = result.map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-            if !include_nulls
-                && params.iter().all(|b| matches!(b, SqlParam::Null))
-                && !params.is_empty()
+            if !include_nulls && Self::is_null_set(&params)
             {
                 continue;
             }
@@ -176,14 +210,7 @@ impl<T: Table> SqlUpdate<T>
             {
                 sql.push_str(", ");
             }
-            // Postgres rejects qualified SET targets ("table".col = ...) —
-            // strip the target-table prefix from the LHS if present.
-            let clause = clause
-                .strip_prefix('"')
-                .and_then(|c| c.strip_prefix(T::TABLE_NAME))
-                .and_then(|c| c.strip_prefix("\"."))
-                .unwrap_or(&clause);
-            sql.push_str(clause);
+            sql.push_str(Self::strip_target_prefix(&clause));
             binds.extend(params);
             set_count += 1;
         }
@@ -459,5 +486,45 @@ mod tests
             binds,
             vec![SqlParam::String("updated".into()), SqlParam::String("hello".into())],
         );
+    }
+
+    #[test]
+    fn set_columns_in_set_order()
+    {
+        let q =
+            SqlUpdate::<Users>::new().set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(30i32)]);
+        assert_eq!(q.set_columns(), vec!["name", "age"]);
+    }
+
+    #[test]
+    fn set_columns_empty_without_sets()
+    {
+        assert!(SqlUpdate::<Users>::new().set_columns().is_empty());
+    }
+
+    #[test]
+    fn set_columns_skips_null_sets_by_default()
+    {
+        let q = SqlUpdate::<Users>::new()
+            .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)]);
+        assert_eq!(q.set_columns(), vec!["name"]);
+    }
+
+    #[test]
+    fn set_columns_keeps_null_sets_with_include_nulls()
+    {
+        let q = SqlUpdate::<Users>::new()
+            .set([UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)])
+            .include_nulls();
+        assert_eq!(q.set_columns(), vec!["name", "age"]);
+    }
+
+    #[test]
+    fn set_columns_for_computed_value()
+    {
+        let q = SqlUpdate::<Users>::new().set([UExpr::new()
+            .column(UsersCol::Age)
+            .eq(UExpr::new().column(UsersCol::Age).add(1i32))]);
+        assert_eq!(q.set_columns(), vec!["age"]);
     }
 }
