@@ -201,7 +201,7 @@ impl<T: Table> SqlInsert<T>
     {
         if !self.include_nulls && self.select_source.is_none() && !self.rows.is_empty()
         {
-            drop_null_only_columns(&mut self.columns, &mut self.rows);
+            resolve_null_columns(&mut self.columns, &mut self.rows);
         }
 
         let mut sql = String::with_capacity(128);
@@ -292,8 +292,17 @@ impl<T: Table> SqlInsert<T>
     }
 }
 
+/// A cell that is nothing but a null bind, the shape `col.eq(None)` produces.
+/// `SqlParam::Null` reports its type as `void`, so such a cell can never reach
+/// Postgres as a parameter — it is either dropped with its column or rendered
+/// as the `NULL` literal.
+fn is_bare_null(cell: &RowCell) -> bool
+{
+    matches!(cell, Ok((sql, binds)) if sql == "$#" && matches!(binds.as_slice(), [SqlParam::Null]))
+}
+
 #[allow(clippy::ptr_arg)] // both args mutated via Vec::retain, slices won't do
-fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>)
+fn resolve_null_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>)
 {
     let mut keep = vec![false; columns.len()];
     for row in rows.iter()
@@ -315,6 +324,19 @@ fn drop_null_only_columns(columns: &mut Vec<String>, rows: &mut Vec<Row>)
             if has_value
             {
                 keep[i] = true;
+            }
+        }
+    }
+    // A column another row gave a value to survives, and every row that had
+    // none still holds a null cell. Bound, it would carry `void` and Postgres
+    // would refuse the statement; as the literal it takes the column's type.
+    for row in rows.iter_mut()
+    {
+        for (i, cell) in row.iter_mut().enumerate()
+        {
+            if keep.get(i).copied().unwrap_or(true) && is_bare_null(cell)
+            {
+                *cell = Ok(("NULL".to_string(), vec![]));
             }
         }
     }
@@ -543,7 +565,7 @@ mod tests
     #[test]
     fn insert_nested_keeps_column_if_any_row_has_value()
     {
-        let (sql, _) = build(
+        let (sql, binds) = build(
             SqlInsert::<Users>::new()
                 .values_nested([
                     vec![UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)],
@@ -551,7 +573,31 @@ mod tests
                 ])
                 .unwrap(),
         );
-        assert_eq!(sql, r#"INSERT INTO "users" (name, age) VALUES ($1, $2), ($3, $4)"#);
+        // The null row renders the literal, never a bind: `SqlParam::Null` would
+        // reach Postgres typed `void` and the statement would be refused.
+        assert_eq!(sql, r#"INSERT INTO "users" (name, age) VALUES ($1, NULL), ($2, $3)"#);
+        assert_eq!(
+            binds,
+            vec![
+                SqlParam::String("alice".into()),
+                SqlParam::String("bob".into()),
+                SqlParam::I32(30),
+            ],
+        );
+    }
+
+    #[test]
+    fn insert_nested_null_literal_never_binds_void()
+    {
+        let (_, binds) = build(
+            SqlInsert::<Users>::new()
+                .values_nested([
+                    vec![UsersCol::Name.eq("alice"), UsersCol::Age.eq(SqlParam::Null)],
+                    vec![UsersCol::Name.eq("bob"), UsersCol::Age.eq(30i32)],
+                ])
+                .unwrap(),
+        );
+        assert!(!binds.iter().any(SqlParam::is_null), "a null must never survive as a bind");
     }
 
     #[test]
