@@ -6,7 +6,11 @@ use sqlx::{
     postgres::{PgPool, PgQueryResult, PgRow},
 };
 
-use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
+use crate::shared::{
+    cached::{self, CacheError},
+    error::SqlQueryError,
+    value::SqlParam,
+};
 
 /// Emits a tracing event for a query about to hit Postgres. SQL and bind
 /// count go to debug; full bind values go to trace.
@@ -18,6 +22,7 @@ fn trace_sql(sql: &str, binds: &[SqlParam])
 }
 
 /// A query whose placeholders have not yet been renumbered or bound.
+#[derive(Clone)]
 pub struct UnbindedQuery
 {
     pub(crate) sql: String,
@@ -479,6 +484,13 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T>
 
 impl<T> CachedBoundQueryAs<T>
 {
+    /// The `sq:e:` Redis key this read is cached under.
+    #[must_use]
+    pub fn key(&self) -> String
+    {
+        cached::cache_key(&self.sql, &self.binds)
+    }
+
     /// Opts out of Redis caching, returning a plain `BoundQueryAs<T>`
     /// that does not require a Redis connection.
     #[must_use]
@@ -515,12 +527,15 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Vec<T>, sqlx::Error>
+    ) -> Result<Vec<T>, CacheError>
     {
         cached::with_cache(
             self.sql,
@@ -534,12 +549,15 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<T, sqlx::Error>
+    ) -> Result<T, CacheError>
     {
         cached::with_cache(
             self.sql,
@@ -553,12 +571,15 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Option<T>, sqlx::Error>
+    ) -> Result<Option<T>, CacheError>
     {
         cached::with_cache(
             self.sql,
@@ -634,6 +655,13 @@ where
 
 impl<T> CachedBoundQueryScalar<T>
 {
+    /// The `sq:e:` Redis key this read is cached under.
+    #[must_use]
+    pub fn key(&self) -> String
+    {
+        cached::cache_key(&self.sql, &self.binds)
+    }
+
     /// Opts out of Redis caching, returning a plain `BoundQueryScalar<T>`
     /// that does not require a Redis connection.
     #[must_use]
@@ -671,12 +699,15 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<T, sqlx::Error>
+    ) -> Result<T, CacheError>
     {
         cached::with_cache(
             self.sql,
@@ -690,12 +721,15 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Option<T>, sqlx::Error>
+    ) -> Result<Option<T>, CacheError>
     {
         cached::with_cache(
             self.sql,
@@ -709,12 +743,15 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Vec<T>, sqlx::Error>
+    ) -> Result<Vec<T>, CacheError>
     {
         cached::with_cache(
             self.sql,

@@ -19,7 +19,7 @@ pub use set_op::SqlSetOp;
 pub use shared::test_support;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
-    cached::{CacheTag, cache_key, invalidate_tables},
+    cached::{CacheError, CacheTag, cache_key, invalidate_tables},
     error::SqlQueryError,
     expr::{ColOps, EvalExpr, Expr, FrameBound, SqlJoin, SqlOrder, WindowSpec},
     unbinded_query::{
