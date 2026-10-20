@@ -4,6 +4,8 @@ use redis::{AsyncCommands, Script};
 use serde::{Serialize, de::DeserializeOwned};
 use xxhash_rust::xxh3::Xxh3;
 
+#[cfg(feature = "test-support")]
+use crate::shared::test_support::{self, PausePoint};
 use crate::shared::value::SqlParam;
 
 /// Trait for grouping related tables under a single tag.
@@ -58,13 +60,13 @@ fn table_key(table: &str) -> String
     s
 }
 
-/// Generic cache-or-fetch helper. Checks Redis for a cached result using the
-/// precomputed key, falling back to `fetch` on miss. On miss, stores the
+/// Generic cache-or-fetch helper. Checks Redis for a cached result under the
+/// query's key, falling back to `fetch` on miss. On miss, stores the
 /// serialized result and registers the entry under each table's reverse index
 /// so a later `invalidate_tables` can sweep it.
-pub async fn with_cache<T, F, Fut>(
-    key: &str,
-    sql: &str,
+pub(crate) async fn with_cache<T, F, Fut>(
+    sql: String,
+    binds: Vec<SqlParam>,
     ttl: u64,
     tables: &[&'static str],
     redis: &mut redis::aio::MultiplexedConnection,
@@ -72,25 +74,43 @@ pub async fn with_cache<T, F, Fut>(
 ) -> Result<T, sqlx::Error>
 where
     T: Serialize + DeserializeOwned,
-    F: FnOnce() -> Fut,
+    F: FnOnce(String, Vec<SqlParam>) -> Fut,
     Fut: Future<Output = Result<T, sqlx::Error>>,
 {
-    if let Ok(Some(hit)) = redis.get::<&str, Option<String>>(key).await
+    let key = cache_key(&sql, &binds);
+    #[cfg(feature = "test-support")]
+    let (site_sql, site_binds) = (sql.clone(), binds.clone());
+    #[cfg(feature = "test-support")]
+    let site = |hit| test_support::PauseSite {
+        key: &key,
+        sql: &site_sql,
+        binds: &site_binds,
+        tables,
+        hit,
+    };
+
+    if let Ok(Some(hit)) = redis.get::<&str, Option<String>>(&key).await
         && let Ok(val) = serde_json::from_str(&hit)
     {
         tracing::debug!("HIT {key} {sql}");
+        #[cfg(feature = "test-support")]
+        test_support::hook(PausePoint::AfterLookup, &site(true)).await;
         return Ok(val);
     }
 
     tracing::debug!("MISS {key} {sql}");
-    let result = fetch().await?;
+    #[cfg(feature = "test-support")]
+    test_support::hook(PausePoint::AfterLookup, &site(false)).await;
+    let result = fetch(sql, binds).await?;
+    #[cfg(feature = "test-support")]
+    test_support::hook(PausePoint::BeforeFill, &site(false)).await;
 
     if let Ok(json) = serde_json::to_string(&result)
     {
-        let _: Result<(), _> = redis.set_ex::<_, _, ()>(key, &json, ttl).await;
+        let _: Result<(), _> = redis.set_ex::<_, _, ()>(&key, &json, ttl).await;
         for t in tables
         {
-            let _: Result<(), _> = redis.sadd::<_, _, ()>(table_key(t), key).await;
+            let _: Result<(), _> = redis.sadd::<_, _, ()>(table_key(t), &key).await;
         }
     }
 

@@ -15,6 +15,8 @@ pub use delete::SqlDelete;
 pub use insert::SqlInsert;
 pub use select::SqlSelect;
 pub use set_op::SqlSetOp;
+#[cfg(feature = "test-support")]
+pub use shared::test_support;
 pub use shared::{
     Id, SqlColId, SqlConflict, Table,
     cached::{CacheTag, cache_key, invalidate_tables},
