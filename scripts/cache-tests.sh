@@ -49,13 +49,9 @@ export SQL_QUERY_TEST_DATABASE_URL="postgres://postgres:sqlq@127.0.0.1:$pg_port/
 export SQL_QUERY_TEST_REDIS_URL="redis://127.0.0.1:$rd_port/0"
 echo "isolated instance: $pg (:$pg_port), $rd (:$rd_port)"
 
-selector=(--test cache_fence)
-passthrough=()
-if [[ $# -gt 0 ]]; then
-    selector=()
-    while [[ $# -gt 0 && "$1" != "--" ]]; do selector+=("$1"); shift; done
-    [[ "${1:-}" == "--" ]] && shift
-    passthrough=("$@")
-fi
+selector=()
+while [[ $# -gt 0 && "$1" != "--" ]]; do selector+=("$1"); shift; done
+[[ "${1:-}" == "--" ]] && shift
+[[ ${#selector[@]} -eq 0 ]] && selector=(--test cache_fence)
 
-cargo test --features test-support "${selector[@]}" -- --ignored --test-threads=1 "${passthrough[@]}"
+cargo test --features test-support "${selector[@]}" -- --ignored --test-threads=1 "$@"

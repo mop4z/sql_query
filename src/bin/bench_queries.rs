@@ -3,8 +3,8 @@
 use std::{hint::black_box, time::Instant};
 
 use sql_query::{
-    EvalExpr, Expr, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table, UnbindedWriteQuery,
-    define_id,
+    EvalExpr, Expr, Id, SqlBase, SqlCols, SqlJoin, SqlOrder, SqlParam, SqlQ, Table,
+    UnbindedWriteQuery, define_id,
 };
 use sqlx::FromRow;
 
@@ -326,6 +326,22 @@ fn main()
 
     println!("\n--- DELETE ---");
     run_bench("delete: 2 filters", iters, bench_delete_with_filter);
+
+    // A cached read keeps the original query so a fenced fill can re-run it
+    // uncached; this is the cost of that clone.
+    println!("\n--- Clone ---");
+    let small = SqlQ::select::<Users>()
+        .filter([UsersCol::Name.eq("alice"), UsersCol::Age.gt(18i32)])
+        .build()
+        .unwrap();
+    run_bench("clone: 2 filters", iters, || {
+        black_box(small.clone());
+    });
+    let ids: Vec<UserId> = (0..1000).map(|_| UserId::new()).collect();
+    let large = SqlQ::select::<Users>().filter([UsersCol::Id.any(ids.as_slice())]).build().unwrap();
+    run_bench("clone: ANY over 1000 uuids", iters, || {
+        black_box(large.clone());
+    });
 
     println!("\n--- Baseline ---");
     run_bench("raw format! string (same as select full)", iters, bench_raw_string_baseline);
