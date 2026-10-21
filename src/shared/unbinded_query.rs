@@ -6,7 +6,11 @@ use sqlx::{
     postgres::{PgPool, PgQueryResult, PgRow},
 };
 
-use crate::shared::{cached, error::SqlQueryError, value::SqlParam};
+use crate::shared::{
+    cached::{self, CacheError},
+    error::SqlQueryError,
+    value::SqlParam,
+};
 
 /// Emits a tracing event for a query about to hit Postgres. SQL and bind
 /// count go to debug; full bind values go to trace.
@@ -18,6 +22,7 @@ fn trace_sql(sql: &str, binds: &[SqlParam])
 }
 
 /// A query whose placeholders have not yet been renumbered or bound.
+#[derive(Clone)]
 pub struct UnbindedQuery
 {
     pub(crate) sql: String,
@@ -479,6 +484,13 @@ impl<T: for<'r> FromRow<'r, PgRow> + Send + Unpin> BoundQueryAs<T>
 
 impl<T> CachedBoundQueryAs<T>
 {
+    /// The `sq:e:` Redis key this read is cached under.
+    #[must_use]
+    pub fn key(&self) -> String
+    {
+        cached::cache_key(&self.sql, &self.binds)
+    }
+
     /// Opts out of Redis caching, returning a plain `BoundQueryAs<T>`
     /// that does not require a Redis connection.
     #[must_use]
@@ -515,56 +527,68 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Vec<T>, sqlx::Error>
+    ) -> Result<Vec<T>, CacheError>
     {
-        let key = cached::cache_key(&self.sql, &self.binds);
-        let sql = self.sql;
-        let binds = self.binds;
-        let tables = self.tables;
-        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
-            run_query_as(&sql, binds, executor)
-        })
+        cached::with_cache(
+            self.sql,
+            self.binds,
+            self.ttl,
+            &self.tables,
+            redis,
+            |sql, binds| async move { run_query_as(&sql, binds, executor).await },
+        )
         .await
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<T, sqlx::Error>
+    ) -> Result<T, CacheError>
     {
-        let key = cached::cache_key(&self.sql, &self.binds);
-        let sql = self.sql;
-        let binds = self.binds;
-        let tables = self.tables;
-        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
-            run_query_as_one(&sql, binds, executor)
-        })
+        cached::with_cache(
+            self.sql,
+            self.binds,
+            self.ttl,
+            &self.tables,
+            redis,
+            |sql, binds| async move { run_query_as_one(&sql, binds, executor).await },
+        )
         .await
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Option<T>, sqlx::Error>
+    ) -> Result<Option<T>, CacheError>
     {
-        let key = cached::cache_key(&self.sql, &self.binds);
-        let sql = self.sql;
-        let binds = self.binds;
-        let tables = self.tables;
-        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
-            run_query_as_optional(&sql, binds, executor)
-        })
+        cached::with_cache(
+            self.sql,
+            self.binds,
+            self.ttl,
+            &self.tables,
+            redis,
+            |sql, binds| async move { run_query_as_optional(&sql, binds, executor).await },
+        )
         .await
     }
 }
@@ -631,6 +655,13 @@ where
 
 impl<T> CachedBoundQueryScalar<T>
 {
+    /// The `sq:e:` Redis key this read is cached under.
+    #[must_use]
+    pub fn key(&self) -> String
+    {
+        cached::cache_key(&self.sql, &self.binds)
+    }
+
     /// Opts out of Redis caching, returning a plain `BoundQueryScalar<T>`
     /// that does not require a Redis connection.
     #[must_use]
@@ -668,56 +699,68 @@ where
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_one<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<T, sqlx::Error>
+    ) -> Result<T, CacheError>
     {
-        let key = cached::cache_key(&self.sql, &self.binds);
-        let sql = self.sql;
-        let binds = self.binds;
-        let tables = self.tables;
-        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
-            run_scalar_one(&sql, binds, executor)
-        })
+        cached::with_cache(
+            self.sql,
+            self.binds,
+            self.ttl,
+            &self.tables,
+            redis,
+            |sql, binds| async move { run_scalar_one(&sql, binds, executor).await },
+        )
         .await
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_optional<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Option<T>, sqlx::Error>
+    ) -> Result<Option<T>, CacheError>
     {
-        let key = cached::cache_key(&self.sql, &self.binds);
-        let sql = self.sql;
-        let binds = self.binds;
-        let tables = self.tables;
-        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
-            run_scalar_optional(&sql, binds, executor)
-        })
+        cached::with_cache(
+            self.sql,
+            self.binds,
+            self.ttl,
+            &self.tables,
+            redis,
+            |sql, binds| async move { run_scalar_optional(&sql, binds, executor).await },
+        )
         .await
     }
 
     /// # Errors
-    /// Propagates `sqlx::Error` from the underlying database call.
+    /// [`CacheError::Database`] for a Postgres failure, [`CacheError::Redis`] or
+    /// [`CacheError::Protocol`] for a cache failure, and
+    /// [`CacheError::GenerationChanged`] when a concurrent invalidation fenced
+    /// the fill: the result is discarded, and only an uncached re-read is safe.
     pub async fn fetch_all<'e>(
         self,
         executor: impl Executor<'e, Database = Postgres>,
         redis: &mut redis::aio::MultiplexedConnection,
-    ) -> Result<Vec<T>, sqlx::Error>
+    ) -> Result<Vec<T>, CacheError>
     {
-        let key = cached::cache_key(&self.sql, &self.binds);
-        let sql = self.sql;
-        let binds = self.binds;
-        let tables = self.tables;
-        cached::with_cache(&key, &sql, self.ttl, &tables, redis, || {
-            run_scalar(&sql, binds, executor)
-        })
+        cached::with_cache(
+            self.sql,
+            self.binds,
+            self.ttl,
+            &self.tables,
+            redis,
+            |sql, binds| async move { run_scalar(&sql, binds, executor).await },
+        )
         .await
     }
 }
@@ -907,6 +950,35 @@ mod tests
     fn renumber_does_not_match_dollar_one()
     {
         assert_eq!(renumber_placeholders("'costs $1' $#"), "'costs $1' $1");
+    }
+
+    /// Entry keys must survive cache-protocol changes byte for byte: the SQL is
+    /// renumbered past `$9` and every bind kind feeds the hash. Values pinned
+    /// at 52add98, before the generation fence.
+    #[test]
+    fn cache_key_is_stable()
+    {
+        let binds: Vec<SqlParam> = vec![
+            "text".into(),
+            7i16.into(),
+            (-7i32).into(),
+            9_007_199_254_740_993i64.into(),
+            1.5f64.into(),
+            true.into(),
+            rust_decimal::Decimal::from_str_exact("12345678901234567890.123456789").unwrap().into(),
+            SqlParam::Json(serde_json::json!({"a": [1, "b"]})),
+            chrono::DateTime::from_timestamp(1_700_000_000, 123_456_789).unwrap().into(),
+            uuid::Uuid::from_u128(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef).into(),
+            vec!["x", "y"].into(),
+            SqlParam::Null,
+        ];
+        let sql = (0..binds.len()).map(|_| "$#").collect::<Vec<_>>().join(", ");
+        let q = UnbindedQuery { sql: format!("SELECT {sql}"), binds, tables: vec!["t"] }
+            .bind_as::<()>()
+            .cached(60);
+        assert!(q.sql.ends_with("$10, $11, $12"), "{}", q.sql);
+        assert_eq!(cached::cache_key(&q.sql, &q.binds), "sq:e:f1d0cdc585c26f76");
+        assert_eq!(cached::cache_key("SELECT 1", &[]), "sq:e:73b3dfdaee01153f");
     }
 
     #[test]

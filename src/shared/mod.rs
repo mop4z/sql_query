@@ -10,6 +10,8 @@ use uuid::Uuid;
 pub mod cached;
 pub mod error;
 pub mod expr;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 pub mod unbinded_query;
 pub mod value;
 

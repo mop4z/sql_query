@@ -43,8 +43,9 @@ Writes: SqlQ::insert/update/delete::<T>()...build()? -> UnbindedWriteQuery -> .b
 `shared/cached.rs` — optional Redis caching with table-tag invalidation:
 - `CacheTag` trait — implement on an enum to group related tables. Use `.tag(&MyTag::Group)` on cached reads and invalidating writes to attach extra tables.
 - `cache_key(sql, binds)` — xxh3 hash of query + params, produces `sq:e:{hash}` key
-- `with_cache()` — cache-or-fetch helper, registers entries under `sq:t:{table}` sets
-- `invalidate_tables()` — Lua script sweeps all entries tagged with given tables
+- `with_cache()` — cache-or-fetch helper fenced by per-table generation tokens (`sq:g:v1`): a lookup script validates hits and snapshots generations before SQL, a fill script stores and registers under `sq:t:{table}` only if none moved, else `CacheError::GenerationChanged`
+- `invalidate_tables()` — Lua script advances each table's generation, then sweeps all entries tagged with it
+- `test-support` feature — `test_support::pause_at` parks a real cached read after lookup or before fill; never enable outside tests. `bash scripts/cache-tests.sh` runs the Postgres/Redis-backed suites (`tests/cache_fence.rs`, `tests/cache_measure.rs`) against throwaway containers
 
 ### Derive Macros
 

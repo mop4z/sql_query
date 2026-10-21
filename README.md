@@ -574,6 +574,42 @@ SqlQ::update::<Users>()
     .execute(pool, redis).await?;
 ```
 
+## Cache Consistency
+
+A cached entry is valid only at the generation it was filled under. Every
+table has an opaque generation token in the never-expiring Redis hash
+`sq:g:v1`; an invalidating write gives each of its tables a fresh token, then
+sweeps the entries tagged with them, in one Lua script. A cached read is two
+scripts at most:
+
+- **Lookup** — returns the entry only if it was stored under exactly the
+  read's dependency set (inferred tables plus `.tag()` tables) at exactly
+  their current tokens; otherwise snapshots those tokens before SQL runs.
+- **Fill** — stores the result and registers it under each table only if no
+  token moved since that snapshot.
+
+A fill that loses the race is discarded, not cached, and the read returns
+`CacheError::GenerationChanged`. The query is safe to run once more uncached
+— keep a clone of the `UnbindedQuery` for that — but the discarded result is
+not. Lost metadata (flush, eviction, a missing reverse index) degrades to
+misses: a missing token is re-created fresh, never as zero, so no surviving
+entry or in-flight fill can match it.
+
+```rust
+let q = SqlQ::select::<Users>().filter([UC::Id.eq(id)]).build()?;
+let user = match q.clone().bind_as::<Users>().cached(60).fetch_one(&pool, &mut redis).await {
+    Err(CacheError::GenerationChanged) => q.bind_as::<Users>().fetch_one(&pool).await?,
+    // Database(sqlx::Error), Redis(RedisError) and Protocol stay distinct.
+    other => other?,
+};
+```
+
+Entries keep their `sq:e:` keys and the caller's TTL (hits do not refresh
+it); the value is a versioned header followed by the serde JSON payload,
+which Lua never parses. A read with a zero TTL goes straight to Postgres.
+Mixing this protocol with an older one on one Redis database is unsupported:
+flush it when switching.
+
 ## Read Cache Opt-Out
 
 Cached select queries can opt out of Redis caching with `.skip_cache()`, which

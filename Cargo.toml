@@ -31,3 +31,12 @@ opt-level = 3
 
 [profile.test.build-override]
 opt-level = 3
+
+[features]
+# Pause points inside the cached-read helper for deterministic race tests.
+# Enable only from tests or dev-dependencies; never in a production build.
+test-support = []
+
+[[test]]
+name = "cache_fence"
+required-features = ["test-support"]
